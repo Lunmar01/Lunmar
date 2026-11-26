@@ -699,7 +699,11 @@ const Input = (() => {
     if (held3) { held3 = false; emit('3hold'); return; }
     if (held) { emit('holdrelease', { dur }); return; }
     if (maxF === 1 && isCircle(path)) { emit('circle'); return; }
-    if (dist > 40) { const dir = Math.abs(pdx) > Math.abs(pdy) ? (pdx > 0 ? 'right' : 'left') : (pdy > 0 ? 'down' : 'up'); emit((maxF > 1 ? Math.min(maxF, 3) : '') + 'swipe-' + dir); return; }
+    if (dist > 40) {
+      const r = Math.abs(pdx) / Math.max(1, Math.abs(pdy));
+      if (maxF === 1 && r > 0.7 && r < 1.43) { const dg = 'swipe-' + (pdy < 0 ? 'up' : 'down') + (pdx > 0 ? 'right' : 'left'), sc = Game.top(); if (sc && sc.kind !== 'menu' && (sc.bindings || []).some(b => b.g && b.g.includes(dg))) { emit(dg); return; } }
+      const dir = Math.abs(pdx) > Math.abs(pdy) ? (pdx > 0 ? 'right' : 'left') : (pdy > 0 ? 'down' : 'up'); emit((maxF > 1 ? Math.min(maxF, 3) : '') + 'swipe-' + dir); return;
+    }
     if (maxF >= 2) { emit(Math.min(maxF, 4) + 'tap'); return; }
     if (!Game.wants('doubletap')) { emit('tap'); return; }
     taps++; clearTimeout(tapT);
@@ -770,7 +774,8 @@ const GESTURE_TH = {
   'tap': 'แตะ 1 ครั้ง', 'doubletap': 'แตะ 2 ครั้ง', 'holdstart': 'แตะค้าง', 'holdrelease': 'ปล่อยนิ้ว', 'circle': 'วาดวงกลม',
   'swipe-up': 'ปัดขึ้น', 'swipe-down': 'ปัดลง', 'swipe-left': 'ปัดซ้าย', 'swipe-right': 'ปัดขวา',
   '2tap': 'แตะ 2 นิ้ว', '3tap': 'แตะ 3 นิ้ว', '4tap': 'แตะ 4 นิ้ว', '2swipe-up': 'ปัด 2 นิ้วขึ้น', '2swipe-down': 'ปัด 2 นิ้วลง',
-  '2swipe-left': 'ปัด 2 นิ้วไปซ้าย', '2swipe-right': 'ปัด 2 นิ้วไปขวา', '3swipe-up': 'ปัด 3 นิ้ว', 'shake': 'เขย่าเครื่อง',
+  '2swipe-left': 'ปัด 2 นิ้วไปซ้าย', '2swipe-right': 'ปัด 2 นิ้วไปขวา', '3swipe-up': 'ปัด 3 นิ้วขึ้น', '3swipe-down': 'ปัด 3 นิ้วลง', '3swipe-left': 'ปัด 3 นิ้วไปซ้าย', '3swipe-right': 'ปัด 3 นิ้วไปขวา', 'shake': 'เขย่าเครื่อง',
+  'swipe-upright': 'ปัดทแยงขึ้นขวา', 'swipe-upleft': 'ปัดทแยงขึ้นซ้าย', 'swipe-downright': 'ปัดทแยงลงขวา', 'swipe-downleft': 'ปัดทแยงลงซ้าย',
 };
 const Game = {
   stack: [],
@@ -1565,26 +1570,45 @@ function goArea(made) { G.area = made.A; G.pos = Object.assign({}, made.start); 
 function AreaScene(A) {
   const sc = {
     kind: 'area', uid: ++UID, area: A, title: A.n, bT: 1.2, regT: 0, hzT: U.rnd(30, 50), hz: null, auto: null,
-    bindings: [
-      { id: 'walk', label: 'เดินหน้า', g: ['swipe-up'], k: ['ArrowUp', 'w'] },
-      { id: 'back', label: 'ถอยหลัง', g: ['swipe-down'], k: ['ArrowDown', 's'] },
-      { id: 'turnL', label: 'หันซ้าย', g: ['swipe-left'], k: ['ArrowLeft', 'a'] },
-      { id: 'turnR', label: 'หันขวา', g: ['swipe-right'], k: ['ArrowRight', 'd'] },
-      { id: 'scan', label: A.kind === 'mine' ? 'ฟังรอบตัว หรือเคาะผนัง' : 'ฟังรอบตัว', g: ['tap'], k: [' '] },
-      { id: 'use', label: 'โต้ตอบ', g: ['doubletap'], k: ['Enter', 'e'] },
-      { id: 'compass', label: 'เข็มทิศเสียง', g: ['2swipe-up'], k: ['c'] },
-      { id: 'status', label: 'สถานะ', g: ['2tap'], k: ['i'] },
-      { id: 'hpPot', label: 'ดื่มยาฟื้นเลือด', g: ['2swipe-left', 'shake'], k: ['p'] },
-      { id: 'spPot', label: 'ดื่มยาพลังจิต', g: ['2swipe-right'], k: ['o'], btn: false },
-      { id: 'menu', label: 'เมนูหลัก', g: ['holdstart', '3tap'], k: ['Escape', 'm'] },
-      { id: 'run', label: 'เดินต่อเนื่อง', g: ['3swipe-up'], k: ['Shift+ArrowUp', 'Shift+w'], btn: false },
-      { id: 'facing', label: 'บอกตำแหน่งและทิศ', g: [], k: ['q'], btn: false },
-      { id: 'bag', label: 'กระเป๋า', g: [], k: ['b'], btn: false },
-      { id: 'quests', label: 'สมุดภารกิจ', g: [], k: ['j'], btn: false },
-      { id: 'nav', label: 'นำทางอัตโนมัติ', g: ['3swipe-down'], k: ['n'], btn: false },
-    ],
+    get bindings() {
+      const common = [
+        { id: 'scan', label: A.kind === 'mine' ? 'ฟังรอบตัว หรือเคาะผนัง' : 'ฟังรอบตัว', g: ['tap'], k: [' '] },
+        { id: 'use', label: 'โต้ตอบ', g: ['doubletap'], k: ['Enter', 'e'] },
+        { id: 'compass', label: 'เข็มทิศเสียง', g: ['2swipe-up'], k: ['c'] },
+        { id: 'status', label: 'สถานะ', g: ['2tap'], k: ['i'] },
+        { id: 'hpPot', label: 'ดื่มยาฟื้นเลือด', g: ['2swipe-left', 'shake'], k: ['p'] },
+        { id: 'spPot', label: 'ดื่มยาพลังจิต', g: ['2swipe-right'], k: ['o'], btn: false },
+        { id: 'menu', label: 'เมนูหลัก', g: ['holdstart', '3tap'], k: ['Escape', 'm'] },
+        { id: 'facing', label: 'บอกตำแหน่งและทิศ', g: [], k: ['q'], btn: false },
+        { id: 'bag', label: 'กระเป๋า', g: [], k: ['b'], btn: false },
+        { id: 'quests', label: 'สมุดภารกิจ', g: [], k: ['j'], btn: false },
+        { id: 'nav', label: 'นำทางอัตโนมัติ', g: ['circle'], k: ['n'], btn: false },
+      ];
+      if (!fourDir()) return [
+        { id: 'walk', label: 'เดินหน้า', g: ['swipe-up'], k: ['ArrowUp', 'w'] },
+        { id: 'back', label: 'ถอยหลัง', g: ['swipe-down'], k: ['ArrowDown', 's'] },
+        { id: 'turnL', label: 'หันซ้าย', g: ['swipe-left'], k: ['ArrowLeft', 'a'] },
+        { id: 'turnR', label: 'หันขวา', g: ['swipe-right'], k: ['ArrowRight', 'd'] },
+        { id: 'run', label: 'เดินต่อเนื่อง', g: ['3swipe-up'], k: ['Shift+ArrowUp', 'Shift+w'], btn: false },
+        ...common];
+      return [
+        { id: 'go0', label: 'ไปทิศเหนือ', g: ['swipe-up'], k: ['ArrowUp', 'w', '8'] },
+        { id: 'go4', label: 'ไปทิศใต้', g: ['swipe-down'], k: ['ArrowDown', 's', '2'] },
+        { id: 'go2', label: 'ไปทิศตะวันออก', g: ['swipe-right'], k: ['ArrowRight', 'd', '6'] },
+        { id: 'go6', label: 'ไปทิศตะวันตก', g: ['swipe-left'], k: ['ArrowLeft', 'a', '4'] },
+        { id: 'go1', label: 'ไปทิศตะวันออกเฉียงเหนือ', g: ['swipe-upright'], k: ['9', 'PageUp'], btn: false },
+        { id: 'go7', label: 'ไปทิศตะวันตกเฉียงเหนือ', g: ['swipe-upleft'], k: ['7', 'Home'], btn: false },
+        { id: 'go3', label: 'ไปทิศตะวันออกเฉียงใต้', g: ['swipe-downright'], k: ['3', 'PageDown'], btn: false },
+        { id: 'go5', label: 'ไปทิศตะวันตกเฉียงใต้', g: ['swipe-downleft'], k: ['1', 'End'], btn: false },
+        { id: 'run0', label: 'เดินต่อเนื่องไปทิศเหนือ', g: ['3swipe-up'], k: ['Shift+ArrowUp', 'Shift+w'], btn: false },
+        { id: 'run4', label: 'เดินต่อเนื่องไปทิศใต้', g: ['3swipe-down'], k: ['Shift+ArrowDown', 'Shift+s'], btn: false },
+        { id: 'run2', label: 'เดินต่อเนื่องไปทิศตะวันออก', g: ['3swipe-right'], k: ['Shift+ArrowRight', 'Shift+d'], btn: false },
+        { id: 'run6', label: 'เดินต่อเนื่องไปทิศตะวันตก', g: ['3swipe-left'], k: ['Shift+ArrowLeft', 'Shift+a'], btn: false },
+        ...common];
+    },
     enter() {
-      this.zoneN = (zoneAt(A, G.pos.x, G.pos.y) || {}).n;
+      this.zoneN = (zoneAt(A, G.pos.x, G.pos.y) || {}).n; if (WALK() === 'north') G.pos.f = 0;
+      if (!CFG.walkAsked) setTimeout(() => { if (Game.top() === this && !CFG.walkAsked) Game.push(WalkAskMenu()); }, 2500);
       areaAmbient(A); areaWeather(A); this.night = isNight();
       A.trk = U.pick(A.c === 4 ? ['mus_4', 'mus_11', 'px_hesapirate', 'px_medallion', 'px_blackpearl'] : ['mus_' + A.c, 'mus_' + (A.c + 7)]);
       areaMusic(A);
@@ -1606,11 +1630,14 @@ function AreaScene(A) {
       if (A.kind === 'via') { say(t + 'ถนนโรมันยาว ' + A.h + ' ก้าว เดินตรงไปทางเหนือตามเสียงเท้าบนถนนหิน ระวังโจรดักปล้น. ' + (CFG.verbose ? 'ปัดสามนิ้วขึ้น หรือกด Shift กับลูกศรขึ้น เพื่อเดินต่อเนื่อง. ' : '') + this.whereText()); return; }
       if (A.kind === 'town') t += (CFG.verbose ? CITIES[A.c].d + '. ' : '') + this.whereText();
       else if (A.kind === 'forest') t += 'ระวังศัตรู ' + this.whereText() + (CFG.verbose ? ' ฟังเสียงรอบตัวด้วยการแตะหนึ่งครั้ง' : '');
-      else t += this.whereText() + (CFG.verbose ? ' เคาะผนังด้วยการหันไปทางผนังแล้วแตะหนึ่งครั้ง ฟังเสียงสะท้อนเพื่อหาแร่' : '');
+      else t += this.whereText() + (CFG.verbose ? (fourDir() ? ' เดินไปชนผนังด้านที่อยากเคาะ แล้วแตะหนึ่งครั้งเพื่อเคาะ' : ' เคาะผนังด้วยการหันไปทางผนังแล้วแตะหนึ่งครั้ง') + ' ฟังเสียงสะท้อนเพื่อหาแร่' : '');
       if (A.kind === 'mine') { const m = onFloor(A.floor, A.c); if (m) t += ' ' + m; }
       say(t);
     },
-    whereText() { const p = this.poiAt(G.pos.x, G.pos.y), z = zoneAt(A, G.pos.x, G.pos.y); return (p ? 'คุณอยู่ที่' + p.n + ' ' : '') + (z && (!p || !p.n.includes(z.n)) ? (p ? 'ใน' : 'คุณอยู่ใน') + z.n + ' ' : '') + 'หันหน้าทิศ' + COMPASS[G.pos.f]; },
+    whereText() { const p = this.poiAt(G.pos.x, G.pos.y), z = zoneAt(A, G.pos.x, G.pos.y); return (p ? 'คุณอยู่ที่' + p.n + ' ' : '') + (z && (!p || !p.n.includes(z.n)) ? (p ? 'ใน' : 'คุณอยู่ใน') + z.n + ' ' : '') + (WALK() === 'north' ? '' : 'หันหน้าทิศ' + COMPASS[G.pos.f]); },
+    withDir(d, fn) { const keep = WALK() === 'north'; G.pos.f = d; try { return fn(); } finally { if (keep) G.pos.f = 0; } },
+    moveDir(d) { return this.withDir(d, () => this.move(1)); },
+    openDirs() { const { x, y } = G.pos; return [0, 2, 4, 6].filter(d => !this.blocked(x + DIRV[d][0], y + DIRV[d][1], x, y)).map(d => 'ทิศ' + COMPASS[d]); },
     poiAt(x, y) { return A.pois.find(p => p.x === x && p.y === y && p.type !== 'stairsUp'); },
     enemyAt(x, y) { return A.enemies.find(e => e.x === x && e.y === y); },
     blocked(x, y, fx, fy) { if (isWall(A, x, y)) return true; const dx = x - fx, dy = y - fy; return dx && dy && isWall(A, fx + dx, fy) && isWall(A, fx, fy + dy); },
@@ -1629,6 +1656,7 @@ function AreaScene(A) {
         case 'spPot': usePotion('spPot'); break;
         case 'menu': AudioSys.ui.select(); Game.push(MainMenu(this)); break;
         case 'run': this.startRun(); break;
+        default: if (/^go[0-7]$/.test(id)) this.moveDir(+id[2]); else if (/^run[0-7]$/.test(id)) this.startRun(+id[3]); break;
         case 'facing': say(this.whereText()); break;
         case 'bag': AudioSys.ui.select(); Game.push(BagMenu()); break;
         case 'quests': AudioSys.ui.select(); Game.push(QuestLog()); break;
@@ -1637,9 +1665,9 @@ function AreaScene(A) {
     },
     move(sign, silent) {
       const { x, y, f } = G.pos, [dx, dy] = DIRV[f], nx = x + dx * sign, ny = y + dy * sign;
-      if (this.blocked(nx, ny, x, y)) { AudioSys.ui.bump(); Haptic.err(); if (!silent) say(isWall(A, nx, ny) ? wallName(A, nx, ny) + ' ผ่านไม่ได้' : 'ทางแคบเกินไป ผ่านแนวทแยงไม่ได้'); return false; }
+      if (this.blocked(nx, ny, x, y)) { AudioSys.ui.bump(); Haptic.err(); if (isWall(A, nx, ny)) this.lastBump = { x: nx, y: ny }; if (!silent) { const od = fourDir() ? this.openDirs() : []; say((isWall(A, nx, ny) ? wallName(A, nx, ny) + (A.kind === 'mine' && fourDir() ? '' : ' ผ่านไม่ได้') : 'ทางแคบเกินไป ผ่านแนวทแยงไม่ได้') + (od.length ? ' ไปได้' + od.join(' ') : '') + (A.kind === 'mine' && fourDir() && isWall(A, nx, ny) && inside(A, nx, ny) && CFG.verbose ? ' แตะหนึ่งครั้งเพื่อเคาะผนังนี้' : '')); } return false; }
       const en = this.enemyAt(nx, ny); if (en) { this.engage(en); return false; }
-      G.pos.x = nx; G.pos.y = ny; AudioSys.step(surfAt(A, nx, ny)); AREA_HOOK.moved(this, nx, ny); if (Game.top() !== this) return true;
+      G.pos.x = nx; G.pos.y = ny; this.lastBump = null; AudioSys.step(surfAt(A, nx, ny)); AREA_HOOK.moved(this, nx, ny); if (Game.top() !== this) return true;
       if (this.hz) { this.hz = null; say('หลบหินร่วงได้ทัน'); }
       const p = this.poiAt(nx, ny), z = zoneAt(A, nx, ny), zn = z ? z.n : null, zmsg = zn && zn !== this.zoneN ? 'เข้าสู่' + zn : '';
       if (zn !== this.zoneN) { const oldAmb = (zoneAt(A, x, y) || {}).amb; this.zoneN = zn; if ((z && z.amb) !== oldAmb) areaAmbient(A); }
@@ -1678,12 +1706,13 @@ function AreaScene(A) {
     },
     scan() {
       const { x, y, f } = G.pos, [dx, dy] = DIRV[f];
-      if (A.kind === 'mine' && isWall(A, x + dx, y + dy) && inside(A, x + dx, y + dy)) return this.knock(x + dx, y + dy);
-      if (A.water && A.water.size) { const wt = [0, 2, 6].filter(o => { const [ddx, ddy] = DIRV[(f + o) % 8]; return A.water.has(U.key(x + ddx, y + ddy)); }).map(o => RELN[o]); if (wt.length) sayq('น้ำลึกทาง' + wt.join(' ')); }
+      const lb = this.lastBump; if (A.kind === 'mine' && lb && cheb(lb.x - x, lb.y - y) === 1 && isWall(A, lb.x, lb.y) && inside(A, lb.x, lb.y)) return this.knock(lb.x, lb.y);
+      if (A.kind === 'mine' && WALK() !== 'north' && isWall(A, x + dx, y + dy) && inside(A, x + dx, y + dy)) return this.knock(x + dx, y + dy);
+      if (A.water && A.water.size) { const wt = [0, 2, 6].filter(o => { const [ddx, ddy] = DIRV[(f + o) % 8]; return A.water.has(U.key(x + ddx, y + ddy)); }).map(o => areaDir(o * Math.PI / 4)); if (wt.length) sayq('น้ำลึกทาง' + wt.join(' ')); }
       const list = this.around().slice(0, 5);
       const zz = zoneAt(A, x, y); let t = (zz ? zz.n + '. ' : '') + (list.length ? '' : '');
-      t += list.length ? list.map(it => (it.e ? (ENEMIES[it.e.e].mech === 'lure' ? 'เสียงคนเรียกให้ช่วย' : ENEMIES[it.e.e].mech === 'song' ? 'เสียงเพลงไพเราะ' : 'ได้ยิน' + ENEMIES[it.e.e].n) + (it.e.aggro ? ' กำลังตามคุณ' : '') : (it.p.hidden ? 'เสียงแผ่ว ๆ แปลก ๆ' : it.p.n)) + ' ' + (it.d === 0 ? 'ตรงนี้' : relName(it.a) + ' ' + it.d + ' ก้าว')).join(', ') : 'เงียบสงบ ไม่มีอะไรอยู่ใกล้';
-      if (A.kind !== 'town') { const open = [0, 2, 6, 4].filter(o => { const [ddx, ddy] = DIRV[(f + o) % 8]; return walkable(A, x + ddx, y + ddy); }).map(o => RELN[o]); t += '. ทางเปิด: ' + (open.join(' ') || 'ไม่มี'); }
+      t += list.length ? list.map(it => (it.e ? (ENEMIES[it.e.e].mech === 'lure' ? 'เสียงคนเรียกให้ช่วย' : ENEMIES[it.e.e].mech === 'song' ? 'เสียงเพลงไพเราะ' : 'ได้ยิน' + ENEMIES[it.e.e].n) + (it.e.aggro ? ' กำลังตามคุณ' : '') : (it.p.hidden ? 'เสียงแผ่ว ๆ แปลก ๆ' : it.p.n)) + ' ' + (it.d === 0 ? 'ตรงนี้' : areaDir(it.a) + ' ' + it.d + ' ก้าว')).join(', ') : 'เงียบสงบ ไม่มีอะไรอยู่ใกล้';
+      if (A.kind !== 'town' || fourDir()) { const open = fourDir() ? this.openDirs() : [0, 2, 6, 4].filter(o => { const [ddx, ddy] = DIRV[(f + o) % 8]; return walkable(A, x + ddx, y + ddy); }).map(o => RELN[o]); t += '. ทางเปิด: ' + (open.join(' ') || 'ไม่มี'); }
       say(t); this.bT = 0.3;
     },
     knock(fx, fy) {
@@ -1692,12 +1721,24 @@ function AreaScene(A) {
       if (CFG.hints) setTimeout(() => say(kind === 0 ? 'เสียงทึบ หินธรรมดา' : kind === 1 ? 'เสียงกังวาน มีแร่ แตะสองครั้งเพื่อขุด' : 'เสียงก้องใส แร่หายาก แตะสองครั้งเพื่อขุด'), 650);
     },
     use() {
+      if (fourDir()) return this.use4();
       const { x, y, f } = G.pos, [dx, dy] = DIRV[f], fx = x + dx, fy = y + dy;
       const p = this.poiAt(x, y) || this.poiAt(fx, fy);
       if (p) return poiAction2(p, this) || poiAction(p, this);
       const en = this.enemyAt(fx, fy); if (en) return this.engage(en);
       if (A.kind === 'mine' && isWall(A, fx, fy) && inside(A, fx, fy)) { const v = A.veins.get(U.key(fx, fy)); if (v) return this.dig(v, fx, fy); say('ผนังนี้ไม่มีแร่ ลองเคาะผนังอื่น'); AudioSys.ui.error(); return; }
       AudioSys.ui.error(); say('ไม่มีอะไรให้โต้ตอบตรงนี้');
+    },
+    use4() {
+      const { x, y } = G.pos, act = p => poiAction2(p, this) || poiAction(p, this);
+      const here = this.poiAt(x, y); if (here) return act(here);
+      const lb = this.lastBump;
+      if (A.kind === 'mine' && lb && cheb(lb.x - x, lb.y - y) === 1 && isWall(A, lb.x, lb.y) && inside(A, lb.x, lb.y)) { const v = A.veins.get(U.key(lb.x, lb.y)); if (v) return this.dig(v, lb.x, lb.y); say('ผนังนี้ไม่มีแร่ ลองเคาะผนังอื่น'); AudioSys.ui.error(); return; }
+      const adj = A.pois.filter(p => p.type !== 'stairsUp' && !p.hidden && cheb(p.x - x, p.y - y) === 1), ens = A.enemies.filter(e => cheb(e.x - x, e.y - y) === 1);
+      const opts = [...adj.map(p => ({ label: p.n, value: () => areaDir(relAngle(p.x - x, p.y - y, G.pos.f)), onSelect: () => { Game.pop(true); act(p); } })), ...ens.map(e => ({ label: 'สู้กับ' + ENEMIES[e.e].n, value: () => areaDir(relAngle(e.x - x, e.y - y, G.pos.f)), onSelect: () => { Game.pop(true); this.engage(e); } }))];
+      if (opts.length === 1) return opts[0].onSelect.call(null, Game.push({ kind: 'noop', uid: ++UID, bindings: [] }));
+      if (opts.length > 1) { Game.push(Menu('โต้ตอบกับอะไร', opts)); return; }
+      AudioSys.ui.error(); say('ไม่มีอะไรให้โต้ตอบตรงนี้ หรือที่ติดกัน');
     },
     dig(v, fx, fy) {
       Game.push(Rhythm('dig', hits => {
@@ -1728,7 +1769,7 @@ function AreaScene(A) {
       const R = hasPower('lightfoot') ? 1 : 3;
       let tx = en.x, ty = en.y;
       if (!peaceful && d <= R) {
-        if (!en.aggro) { en.aggro = true; const a = relAngle(en.x - x, en.y - y, f); AudioSys.voice(D.arch, D.p, 'warn', { id: en.e, angle: a, dist: d, weapon: G.p.weapon }); say(D.n + 'ได้ยินคุณ กำลังเข้ามาทาง' + relName(a)); }
+        if (!en.aggro) { en.aggro = true; const a = relAngle(en.x - x, en.y - y, f); AudioSys.voice(D.arch, D.p, 'warn', { id: en.e, angle: a, dist: d, weapon: G.p.weapon }); say(D.n + 'ได้ยินคุณ กำลังเข้ามาทาง' + areaDir(a)); }
         const opts = DIRV.map(([dx, dy]) => [en.x + dx, en.y + dy]).filter(([nx, ny]) => walkable(A, nx, ny) && !this.enemyAt(nx, ny) && !(nx === x && ny === y));
         opts.sort((a, b) => cheb(a[0] - x, a[1] - y) - cheb(b[0] - x, b[1] - y));
         if (opts.length && cheb(opts[0][0] - x, opts[0][1] - y) < d) [tx, ty] = opts[0];
@@ -1745,12 +1786,17 @@ function AreaScene(A) {
       if (!t || t.msg) { say(t ? t.msg : 'ไม่มีเป้าหมาย'); AudioSys.ui.error(); return; }
       const { x, y, f } = G.pos, a = relAngle(t.x - x, t.y - y, f), d = cheb(t.x - x, t.y - y);
       for (let i = 0; i < 3; i++) setTimeout(() => AudioSys.ping({ angle: a, dist: Math.min(d, 4) * 0.3 }), i * Math.max(120, 120 + d * 40));
-      say(`${t.label || ''}${t.n} ${d === 0 ? 'ตรงนี้' : relName(a) + ' ' + d + ' ก้าว'}`);
+      if (fourDir() && d > 0) { const route = routeText(A, x, y, t.x, t.y); if (route) { say(`${t.label || ''}${t.n} ${route}`); return; } }
+      say(`${t.label || ''}${t.n} ${d === 0 ? 'ตรงนี้' : (fourDir() ? areaDir(a) : relName(a)) + ' ' + d + ' ก้าว'}`);
     },
-    startRun() {
+    startRun(dir) {
+      if (dir === undefined) dir = G.pos.f;
+      return this.withDir(dir, () => this.startRun0(dir));
+    },
+    startRun0(dir) {
       const { x, y, f } = G.pos, [dx, dy] = DIRV[f];
       if (this.blocked(x + dx, y + dy, x, y)) { AudioSys.ui.bump(); say('ข้างหน้าเป็น' + wallName(A, x + dx, y + dy) + ' เดินต่อเนื่องไม่ได้'); return; }
-      this.auto = { run: true, t: 0, n: 0, sides: this.sideSig(), adj: A.pois.filter(p => cheb(p.x - x, p.y - y) <= 1) }; say('เดินต่อเนื่อง ทิศ' + COMPASS[f] + ' หยุดเองเมื่อเจอทางแยก สิ่งของ หรือศัตรู');
+      this.auto = { run: true, dir, t: 0, n: 0, sides: this.sideSig(), adj: A.pois.filter(p => cheb(p.x - x, p.y - y) <= 1) }; say('เดินต่อเนื่อง ทิศ' + COMPASS[f] + ' หยุดเองเมื่อเจอทางแยก สิ่งของ หรือศัตรู');
     },
     sideSig() { const { x, y, f } = G.pos; return [2, 6].map(o => { const [ddx, ddy] = DIRV[(f + o) % 8]; return walkable(A, x + ddx, y + ddy) ? 1 : 0; }).join(''); },
     runStep() {
@@ -1761,8 +1807,8 @@ function AreaScene(A) {
       const adjNow = A.pois.filter(p => !p.hidden && p.snd && cheb(p.x - x, p.y - y) === 1), fresh = adjNow.filter(p => !(a.adj || []).includes(p)); a.adj = adjNow;
       const foe = A.enemies.some(e => cheb(e.x - x, e.y - y) <= 2), item = fresh.length > 0;
       if (foe) { this.auto = null; say('หยุด ได้ยินศัตรูอยู่ใกล้ ' + this.whereText()); return; }
-      if (sig !== a.sides && a.n > 1) { this.auto = null; const open = [2, 6].filter((o, i) => sig[i] === '1').map(o => RELN[o]); say('หยุดที่ทางแยก ' + (open.length ? 'มีทางไป' + open.join(' และ ') + ' ' : '') + this.whereText()); return; }
-      if (item) { this.auto = null; const p = fresh[0]; say('หยุด ' + p.n + 'อยู่' + relName(relAngle(p.x - x, p.y - y, G.pos.f)) + ' 1 ก้าว'); return; }
+      if (sig !== a.sides && a.n > 1) { this.auto = null; const open = [2, 6].filter((o, i) => sig[i] === '1').map(o => areaDir(o * Math.PI / 4)); say('หยุดที่ทางแยก ' + (open.length ? 'มีทางไป' + open.join(' และ ') + ' ' : '') + this.whereText()); return; }
+      if (item) { this.auto = null; const p = fresh[0]; say('หยุด ' + p.n + 'อยู่' + areaDir(relAngle(p.x - x, p.y - y, G.pos.f)) + ' 1 ก้าว'); return; }
       a.sides = sig; if (a.n >= 40) { this.auto = null; say('หยุดพัก ' + this.whereText()); }
     },
     walkTo(tx, ty, name) {
@@ -1777,7 +1823,7 @@ function AreaScene(A) {
         this.night = isNight(); areaAmbient(A);
         if (outdoor(A)) { if (this.night) sayq('ตะวันตกดินแล้ว เสียงจิ้งหรีดดังขึ้น ระวังสัตว์ที่ออกหากินกลางคืน'); else { sayq('รุ่งเช้าแล้ว'); AudioSys.jingle('w_morning', { vol: 0.6 }); } }
       }
-      if (this.auto && this.auto.run) { this.auto.t -= dt; if (this.auto.t <= 0) { this.auto.t = ARMORS[G.p.armor].fast || G.p.bless === 'wind' ? 0.28 : 0.34; this.runStep(); if (Game.top() !== this) return; } }
+      if (this.auto && this.auto.run) { this.auto.t -= dt; if (this.auto.t <= 0) { this.auto.t = ARMORS[G.p.armor].fast || G.p.bless === 'wind' ? 0.28 : 0.34; const rd = this.auto.dir ?? G.pos.f; this.withDir(rd, () => this.runStep()); if (Game.top() !== this) return; } }
       else if (this.auto) {
         this.auto.t -= dt;
         if (this.auto.t <= 0) {
@@ -1786,7 +1832,7 @@ function AreaScene(A) {
           const want = DIRV.findIndex(([dx, dy]) => dx === nx - x && dy === ny - y);
           if (want >= 0) G.pos.f = want;
           const n = this.auto.name;
-          if (!this.move(1, true)) this.auto = null;
+          const okm = this.move(1, true); if (WALK() === 'north') G.pos.f = 0; if (!okm) this.auto = null;
           else if (!this.auto.path.length) { this.auto = null; const p = this.poiAt(G.pos.x, G.pos.y); if (!p) say('ถึง' + n); }
         }
       }
@@ -2015,6 +2061,45 @@ function Rhythm(kind, onDone) {
       else kind === 'dig' ? AudioSys.dig(false) : AudioSys.chop(false);
     },
     hint: 'แตะพร้อมกับเสียงป๊อก',
+  };
+}
+
+// ===================== รูปแบบการเดิน =====================
+const WALK = () => CFG.walk || 'follow';
+const fourDir = () => WALK() !== 'turn';
+// ทิศของสิ่งรอบตัวในพื้นที่สำรวจ: แบบหันตัวใช้ ข้างหน้า/ซ้าย/ขวา แบบสี่ทิศใช้ชื่อทิศจริง
+function areaDir(a) { if (!fourDir()) return relName(a); const idx = ((Math.round((a + G.pos.f * Math.PI / 4) / (Math.PI / 4)) % 8) + 8) % 8; return 'ทิศ' + COMPASS[idx]; }
+function routeText(A, x, y, tx, ty) {
+  const path = findPath(A, x, y, tx, ty); if (!path || !path.length) return null;
+  const segs = []; let px = x, py = y;
+  for (const [nx, ny] of path) { const d = DIRV.findIndex(([dx, dy]) => dx === nx - px && dy === ny - py); if (segs.length && segs[segs.length - 1].d === d) segs[segs.length - 1].n++; else segs.push({ d, n: 1 }); px = nx; py = ny; }
+  const t = segs.slice(0, 2).map((s, i) => (i ? 'แล้ว' : 'ไป') + 'ทิศ' + COMPASS[s.d] + ' ' + s.n + ' ก้าว').join(' ');
+  return t + (segs.length > 2 ? ' แล้วเลี้ยวต่ออีก ' + (segs.length - 2) + ' ครั้ง รวม ' + path.length + ' ก้าว' : '');
+}
+const WALK_NAMES = { follow: 'เดินสี่ทิศ หันตามทางที่เดิน', north: 'เดินสี่ทิศ ยึดทิศเหนือ', turn: 'หันตัวแบบเดิม' };
+const WALK_DESC = { follow: 'ปัดไปทางไหนเดินไปทางนั้น ตัวละครหันไปทางที่เดินล่าสุดเอง เสียงข้างหน้าคือทางที่กำลังเดิน', north: 'ปัดไปทางไหนเดินไปทางนั้น หูขวาคือทิศตะวันออก หูซ้ายคือทิศตะวันตก ข้างหน้าคือทิศเหนือเสมอ เหมือนถือแผนที่', turn: 'ปัดขึ้นเดินหน้า ปัดลงถอยหลัง ปัดซ้ายขวาเพื่อหันตัวทีละ 45 องศา แบบเดิม' };
+function setWalk(m) { CFG.walk = m; CFG.walkAsked = true; saveCfg(); if (m === 'north' && G.pos) G.pos.f = 0; Game.sig = ''; }
+function WalkAskMenu() {
+  return Menu('การเดินแบบใหม่', ['follow', 'north', 'turn'].map(m => ({ label: WALK_NAMES[m] + (m === 'follow' ? ' แนะนำ' : ''), desc: WALK_DESC[m], onSelect: () => { setWalk(m); Game.pop(true); say('ใช้' + WALK_NAMES[m] + '. ' + WALK_DESC[m] + '. เปลี่ยนได้ที่ ตั้งค่า แล้วเลือก รูปแบบการเดิน'); } })),
+    { noBack: true, intro: 'ตอนนี้เดินได้ทุกทิศโดยไม่ต้องหันตัว และเดินทแยงได้ด้วย เลือกรูปแบบที่ชอบ แตะหนึ่งครั้งเพื่อฟังคำอธิบาย' });
+}
+// ฝึกฟังเสียงแล้วบอกทิศ
+function DirTrain() {
+  let n = 0, ok = 0, want = 0; const total = 10;
+  const play = () => { want = U.pick(fourDir() ? [0, 1, 2, 3, 4, 5, 6, 7] : [0, 2, 4, 6]); setTimeout(() => AudioSys.beacon('fountain', { angle: want * Math.PI / 4, dist: 1 }), 250); };
+  const ids = [['go0', 'swipe-up', ['ArrowUp', '8']], ['go4', 'swipe-down', ['ArrowDown', '2']], ['go2', 'swipe-right', ['ArrowRight', '6']], ['go6', 'swipe-left', ['ArrowLeft', '4']], ['go1', 'swipe-upright', ['9', 'PageUp']], ['go7', 'swipe-upleft', ['7', 'Home']], ['go3', 'swipe-downright', ['3', 'PageDown']], ['go5', 'swipe-downleft', ['1', 'End']]];
+  return {
+    kind: 'train', uid: ++UID, title: 'ฝึกฟังเสียงแล้วบอกทิศ',
+    bindings: [...ids.map(([id, g, k]) => ({ id, label: 'ทิศ' + COMPASS[+id[2]], g: [g], k, btn: +id[2] % 2 === 0 })), { id: 'again', label: 'ฟังอีกครั้ง', g: ['tap'], k: [' '] }, { id: 'quit', label: 'ออก', g: ['3tap'], k: ['Escape'] }],
+    enter() { say('ฟังเสียงน้ำพุ แล้วปัดไปทางที่ได้ยิน ข้างหน้าคือทิศเหนือ หูขวาคือทิศตะวันออก' + (fourDir() ? ' ปัดทแยงได้ด้วย' : '') + ' มี ' + total + ' ข้อ แตะหนึ่งครั้งเพื่อฟังซ้ำ'); setTimeout(play, 2600); },
+    onAction(id) {
+      if (id === 'quit') { Game.pop(); return; }
+      if (id === 'again') { AudioSys.beacon('fountain', { angle: want * Math.PI / 4, dist: 1 }); return; }
+      const d = +id[2]; n++;
+      if (d === want) { ok++; AudioSys.ui.ding(); } else { AudioSys.ui.error(); say('เสียงมาจากทิศ' + COMPASS[want]); }
+      if (n >= total) { setTimeout(() => { say(`ฝึกเสร็จแล้ว ถูก ${ok} จาก ${total} ข้อ`); setTimeout(() => Game.pop(true), 2500); }, 700); return; }
+      setTimeout(play, d === want ? 500 : 1800);
+    },
   };
 }
 
@@ -2619,7 +2704,7 @@ function useItem(k, cb) {
       break;
     case 'concha': {
       if (!ar || sc) { say('ใช้ได้ตอนสำรวจ'); return false; } use(); const { x, y, f } = G.pos;
-      const l = ar.area.enemies.map(e => `${ENEMIES[e.e].n} ${relName(relAngle(e.x - x, e.y - y, f))} ${cheb(e.x - x, e.y - y)} ก้าว`);
+      const l = ar.area.enemies.map(e => `${ENEMIES[e.e].n} ${areaDir(relAngle(e.x - x, e.y - y, f))} ${cheb(e.x - x, e.y - y)} ก้าว`);
       AudioSys.beacon('quest'); say(l.length ? 'เปลือกหอยกระซิบ: ' + l.join(', ') : 'เปลือกหอยเงียบสนิท ไม่มีศัตรูในพื้นที่นี้'); break;
     }
     case 'tinni': use(); buff('tinni', 60); AudioSys.beacon('bell'); say('แขวนกระดิ่งทินทินนาบูลุม วิญญาณจะไม่เข้าใกล้ 60 วินาที'); break;
@@ -2628,7 +2713,7 @@ function useItem(k, cb) {
       if (!ar || sc) { say('ใช้ได้ตอนสำรวจ'); return false; } use(); const { x, y, f } = G.pos;
       const h = ar.area.pois.filter(p => p.hidden || ['secret', 'ecoin', 'bulla', 'cataDoor'].includes(p.type));
       h.forEach(p => p.hidden = 0);
-      say(h.length ? 'คัมภีร์ซิบิลทำนาย: ' + h.map(p => `${p.n} ${relName(relAngle(p.x - x, p.y - y, f))} ${cheb(p.x - x, p.y - y)} ก้าว`).join(', ') : 'คัมภีร์ซิบิลบอกว่าที่นี่ไม่มีความลับ'); break;
+      say(h.length ? 'คัมภีร์ซิบิลทำนาย: ' + h.map(p => `${p.n} ${areaDir(relAngle(p.x - x, p.y - y, f))} ${cheb(p.x - x, p.y - y)} ก้าว`).join(', ') : 'คัมภีร์ซิบิลบอกว่าที่นี่ไม่มีความลับ'); break;
     }
     case 'ariadne': {
       if (!ar || sc || ar.area.kind === 'town') { say('ใช้ได้ในป่า เหมือง และพื้นที่อื่นนอกเมือง'); return false; } use(); say('ตามด้ายของอาริแอดนีกลับเมือง');
@@ -3781,6 +3866,7 @@ function SettingsMenu() {
   const onoff = v => v ? 'เปิด' : 'ปิด';
   return Menu('ตั้งค่า', () => [
     { label: 'โหมดการเล่น', value: () => CFG.mode === 'pc' ? 'คอมพิวเตอร์' : CFG.mode === 'gesture' ? 'ท่าทาง' : 'ปุ่ม', desc: 'โหมดท่าทางใช้การปัดทั่วจอ ต้องปิดโปรแกรมอ่านหน้าจอ. โหมดปุ่มใช้กับ TalkBack และ VoiceOver ได้. โหมดคอมพิวเตอร์ใช้คีย์บอร์ดกับ NVDA หรือ JAWS', onSelect: () => { CFG.mode = CFG.mode === 'gesture' ? 'buttons' : CFG.mode === 'buttons' ? 'pc' : 'gesture'; saveCfg(); applyCfg(); Game.sig = ''; Game.render(); say('โหมด' + (CFG.mode === 'pc' ? 'คอมพิวเตอร์ ข้อความส่งให้ NVDA หรือ JAWS อ่าน' : CFG.mode === 'gesture' ? 'ท่าทาง' : 'ปุ่ม')); pcFocus(); } },
+    { label: 'รูปแบบการเดิน', value: () => WALK_NAMES[WALK()], desc: 'แตะสองครั้งเพื่อเปลี่ยน. ' + WALK_DESC.follow + '. หรือ ' + WALK_DESC.north + '. หรือ ' + WALK_DESC.turn, onSelect: () => { const order = ['follow', 'north', 'turn']; setWalk(order[(order.indexOf(WALK()) + 1) % 3]); say(WALK_NAMES[WALK()] + '. ' + WALK_DESC[WALK()]); } },
     { label: 'ปุ่มคีย์บอร์ด', desc: 'เปลี่ยนปุ่มของแต่ละคำสั่งได้เอง', onSelect: () => Game.push(KeymapMenu()) },
     { label: 'เสียงรอบทิศสำหรับหูฟัง', value: () => onoff(CFG.hrtf), desc: 'แยกเสียงหน้าและหลังได้ชัดขึ้นเมื่อใส่หูฟัง', onSelect: () => { set('hrtf', !CFG.hrtf); say('เสียงรอบทิศ ' + onoff(CFG.hrtf)); [0, 1, 2, 3].forEach(i => setTimeout(() => AudioSys.ping({ angle: i * Math.PI / 2 }), i * 450)); } },
     { label: 'ส่งออกไฟล์บันทึก', desc: 'บันทึกเกมทุกช่องเป็นไฟล์ เพื่อย้ายไปเล่นเครื่องอื่น', onSelect: () => exportSave() },
@@ -3810,6 +3896,7 @@ function SettingsMenu() {
 function SoundRoom() {
   const P = G.p, w = (P && P.weapon) || 'sword';
   const items = [
+    { label: 'ด่านฝึก: ฟังเสียงแล้วบอกทิศ', desc: 'เกมเล่นเสียงจากทิศหนึ่ง ให้ปัดไปทางนั้น 10 ข้อ', onSelect: () => Game.push(DirTrain()) },
     { label: 'ทิศทาง: ซ้าย', onSelect: () => AudioSys.beacon('exit', { angle: -Math.PI / 2 }) },
     { label: 'ทิศทาง: ขวา', onSelect: () => AudioSys.beacon('exit', { angle: Math.PI / 2 }) },
     { label: 'ทิศทาง: ข้างหน้า', onSelect: () => AudioSys.beacon('exit', { angle: 0 }) },
@@ -3838,13 +3925,14 @@ function SoundRoom() {
 const HELP_PAGES = [
   'ส่วนขยายยุคโรมัน: ทุกเมืองมีพื้นที่ที่ 3 โรงอาบน้ำ และชาวเมืองเพิ่ม 3 คน มีถนนโรมันที่เกิดเหตุการณ์ระหว่างเดินทาง สุสานใต้ดินลับใต้วิหารของเอาเรีย คัมปานา และเหรียญจักรพรรดิ 21 เหรียญให้สะสม สัตว์ประหลาดใหม่แต่ละตัวมีลูกเล่นเสียงของตัวเอง ฟังคำอธิบายได้ในข่าวลือที่โรงอาบน้ำ',
   'เกมนี้เล่นด้วยหูและมือ ใส่หูฟังสเตอริโอเพื่อฟังทิศทางของเสียง. มีสองโหมด โหมดท่าทางใช้การปัดและแตะทั่วจอ ต้องปิด TalkBack หรือ VoiceOver ก่อน. โหมดปุ่มใช้ปุ่มบนหน้าจอ ใช้ร่วมกับโปรแกรมอ่านหน้าจอได้. แตะสี่นิ้วเพื่อสลับโหมดได้ทุกเมื่อ',
+  'การเดินสี่ทิศ (ค่าเริ่มต้น): ปัดขึ้นไปทิศเหนือ ปัดลงไปทิศใต้ ปัดขวาไปทิศตะวันออก ปัดซ้ายไปทิศตะวันตก ไม่ต้องหันตัว. ปัดทแยงเพื่อเดินทแยง เช่น ปัดขึ้นไปทางขวาคือทิศตะวันออกเฉียงเหนือ บนคอมพิวเตอร์ใช้ปุ่มตัวเลข 7 9 1 3 หรือ Home Page Up End Page Down. ปัดสามนิ้วไปทิศไหนเพื่อเดินต่อเนื่องไปทิศนั้น หรือกด Shift กับลูกศร. วาดวงกลมเพื่อเลือกสถานที่ให้เกมเดินไปให้. โต้ตอบได้โดยไม่ต้องหันหน้าเข้าหา เกมหาสิ่งที่อยู่ติดตัวให้เอง ถ้ามีหลายอย่างจะถามว่าจะเลือกอันไหน. ในเหมืองให้เดินไปชนผนังด้านที่อยากเคาะก่อน แล้วแตะหนึ่งครั้งเพื่อเคาะ แตะสองครั้งเพื่อขุด. เข็มทิศเสียงจะบอกทางเป็นทิศให้เดินตาม. มี 3 รูปแบบให้เลือกที่ ตั้งค่า แล้วเลือก รูปแบบการเดิน: หันตามทางที่เดิน, ยึดทิศเหนือ หรือหันตัวแบบเดิม. ฝึกฟังทิศได้ที่ ห้องฝึกฟัง แล้วเลือก ด่านฝึก ฟังเสียงแล้วบอกทิศ',
   'การสำรวจ: ปัดขึ้นเพื่อเดินหน้า ปัดลงเพื่อถอยหลัง ปัดซ้ายหรือขวาเพื่อหันทีละ 45 องศา. แตะหนึ่งครั้งเพื่อฟังรอบตัว แตะสองครั้งเพื่อโต้ตอบ คุย เก็บของ เข้าร้าน. แตะค้างหรือแตะสามนิ้วเพื่อเปิดเมนูหลัก. แตะสองนิ้วเพื่อฟังสถานะ. ปัดสองนิ้วขึ้นเพื่อใช้เข็มทิศเสียง ชี้ทางไปเป้าหมายภารกิจ. ปัดสองนิ้วลงเพื่อฟังข้อความล่าสุดซ้ำ',
   'แผนที่ใหญ่: เมืองทุกเมืองใช้ผังโรมัน มีถนนคาร์โดวิ่งเหนือใต้ และถนนเดคูมานุสวิ่งตะวันออกตะวันตก ตัดกันที่ฟอรุมกลางเมืองซึ่งมีน้ำพุ. ประตูเมืองอยู่ปลายถนนทั้งสี่ทิศ. เมืองแบ่งเป็นย่านวิหาร ย่านบ้านพัก ย่านตลาด และย่านช่างฝีมือ เข้าย่านใหม่เกมจะบอกชื่อย่าน. ฟังเสียงเท้าเพื่อรู้ว่าเดินอยู่บนถนน ทางเดิน หรือพื้นอะไร. ป่ามีทางเดินหลัก ลำธาร และสะพาน. เหมืองมีอุโมงค์หลักที่มีรางให้เดินตาม แร่ดีมักอยู่ในอุโมงค์แยก. ปัดสามนิ้วขึ้น หรือกด Shift กับลูกศรขึ้น เพื่อเดินต่อเนื่อง เกมจะหยุดเองเมื่อเจอทางแยก สิ่งของ หรือศัตรู. ปัดสามนิ้วลง หรือกด N เพื่อเลือกสถานที่แล้วให้เกมเดินไปให้. ที่ลานเกวียนเลือก เดินเท้าตามถนนโรมัน เพื่อเดินทางไปเมืองอื่นด้วยตัวเองได้',
   'ในเมือง: น้ำพุอยู่กลางเมือง ประตูไปพื้นที่ที่ 3 อยู่ใต้โรงเตี๊ยมหนึ่งก้าว โรงอาบน้ำอยู่ระหว่างวิหารกับประตูเหมือง ชาวเมืองยืนกระจายอยู่หลายจุด ใช้คำสั่งเดินไปที่ในเมนูหลักได้. น้ำพุอยู่กลางเมือง วิหารอยู่เหนือ โรงเตี๊ยมอยู่ใต้ ช่างตีเหล็กอยู่ตะวันออก ร้านยาอยู่ตะวันตก ผู้นำเมืองยืนอยู่เหนือน้ำพุหนึ่งก้าว ประตูป่าอยู่มุมตะวันตกเฉียงเหนือ ประตูเหมืองอยู่มุมตะวันออกเฉียงเหนือ ลานเกวียนอยู่มุมตะวันตกเฉียงใต้. ทุกเมืองมีผังเหมือนกัน และเมนูหลักมีคำสั่งเดินไปที่ เพื่อเดินอัตโนมัติ',
   COMBAT_HELP,
   'ในเหมือง: หันหน้าเข้าหาผนังแล้วแตะหนึ่งครั้งเพื่อเคาะ เสียงทึบคือหินธรรมดา เสียงกังวานคือมีแร่ เสียงก้องใสคือแร่หายาก. แตะสองครั้งเพื่อขุด แล้วแตะตามจังหวะเสียงป๊อก. ถ้าได้ยินเสียงหินร่วง ให้รีบเดินหนี',
   'ถ้าเสียงเงียบหลังปิดหน้าจอหรือสลับแอป: แตะหน้าจอหนึ่งครั้ง เกมจะปลุกเสียงให้เอง. ถ้ายังเงียบ ใช้สามนิ้วแตะค้างไว้ 1 วินาทีแล้วปล่อย หรือไปที่ ตั้งค่า แล้วเลือก รีเซ็ตระบบเสียง. ถ้าปิดจอระหว่างต่อสู้ เกมจะหยุดชั่วคราวให้อัตโนมัติ และถ้าปิดจอนอกการต่อสู้ เกมจะบันทึกให้.',
-  'เล่นบนคอมพิวเตอร์: ในหน้าแรกกด Enter ที่ปุ่ม เล่นบนคอมพิวเตอร์ เกมจะเปิดเต็มจอ และส่งข้อความทั้งหมดให้ NVDA หรือ JAWS อ่านด้วยเสียงและความเร็วที่คุณตั้งไว้ ปุ่มทุกปุ่มจะเข้าเกมโดยตรง. ตอนสำรวจ: ลูกศรขึ้นเดินหน้า ลูกศรลงถอยหลัง ลูกศรซ้ายขวาหันตัว หรือใช้ W A S D. Shift กับลูกศรขึ้น เดินต่อเนื่อง. Enter หรือ E โต้ตอบ. Space ฟังรอบตัวหรือเคาะผนัง. C เข็มทิศเสียง. Q บอกตำแหน่งและทิศ. I สถานะ. B กระเป๋า. J สมุดภารกิจ. N นำทางอัตโนมัติ. P ยาฟื้นเลือด. O ยาพลังจิต. M หรือ Esc เมนูหลัก. ตอนต่อสู้: Space โจมตีเบา Enter โจมตีหนัก ลูกศรซ้ายขวาหลบ ลูกศรลงตั้งรับ ลูกศรขึ้นพุ่งสวน ตัวเลข 1 ถึง 4 ทักษะ 1 ทักษะ 2 ทักษะสุดยอด และอาวุธรอง P ยา I สถานการณ์ Esc หยุดชั่วคราว. ทุกหน้าจอ: F1 รายการปุ่ม H ช่วยเหลือหน้าจอนี้ R พูดซ้ำ ปุ่มบวกลบปรับความดัง Ctrl กับ T เปิดปิดเสียงพูดในตัวเกม F11 เต็มจอ. เปลี่ยนปุ่มเองได้ที่ ตั้งค่า แล้วเลือก ปุ่มคีย์บอร์ด. ย้ายเกมระหว่างโทรศัพท์กับคอมพิวเตอร์ได้ด้วย ตั้งค่า แล้วเลือก ส่งออกไฟล์บันทึก และ นำเข้าไฟล์บันทึก.',
+  'เล่นบนคอมพิวเตอร์: ในหน้าแรกกด Enter ที่ปุ่ม เล่นบนคอมพิวเตอร์ เกมจะเปิดเต็มจอ และส่งข้อความทั้งหมดให้ NVDA หรือ JAWS อ่านด้วยเสียงและความเร็วที่คุณตั้งไว้ ปุ่มทุกปุ่มจะเข้าเกมโดยตรง. ตอนสำรวจ: ลูกศรหรือ W A S D เดินไปทิศเหนือ ใต้ ตะวันออก ตะวันตก. ปุ่มตัวเลข 7 9 1 3 เดินทแยง. Shift กับลูกศร เดินต่อเนื่อง. (ถ้าเลือกแบบหันตัวเดิม ลูกศรซ้ายขวาคือหันตัว). Enter หรือ E โต้ตอบ. Space ฟังรอบตัวหรือเคาะผนัง. C เข็มทิศเสียง. Q บอกตำแหน่งและทิศ. I สถานะ. B กระเป๋า. J สมุดภารกิจ. N นำทางอัตโนมัติ. P ยาฟื้นเลือด. O ยาพลังจิต. M หรือ Esc เมนูหลัก. ตอนต่อสู้: Space โจมตีเบา Enter โจมตีหนัก ลูกศรซ้ายขวาหลบ ลูกศรลงตั้งรับ ลูกศรขึ้นพุ่งสวน ตัวเลข 1 ถึง 4 ทักษะ 1 ทักษะ 2 ทักษะสุดยอด และอาวุธรอง P ยา I สถานการณ์ Esc หยุดชั่วคราว. ทุกหน้าจอ: F1 รายการปุ่ม H ช่วยเหลือหน้าจอนี้ R พูดซ้ำ ปุ่มบวกลบปรับความดัง Ctrl กับ T เปิดปิดเสียงพูดในตัวเกม F11 เต็มจอ. เปลี่ยนปุ่มเองได้ที่ ตั้งค่า แล้วเลือก ปุ่มคีย์บอร์ด. ย้ายเกมระหว่างโทรศัพท์กับคอมพิวเตอร์ได้ด้วย ตั้งค่า แล้วเลือก ส่งออกไฟล์บันทึก และ นำเข้าไฟล์บันทึก.',
 ];
 // ===================== บันทึกเกม =====================
 function saveGame(silent) {
