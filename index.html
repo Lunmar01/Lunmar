@@ -1915,6 +1915,9 @@ function areaMusic(A) {
   else if (A.kind === 'via') AudioSys.music(null, 196, 900, 'mx_road', 0.45);
   else if (A.kind === 'mine' && A.c === 4) AudioSys.music(null, 196, 900, 'px_underwater', 0.45);
   else if (A.sub === 'wreck') AudioSys.music(null, 196, 900, A.trk2 || (A.trk2 = U.pick(['px_cave', 'px_skull'])), 0.5);
+  else if (A.sub === 'vine') AudioSys.music(null, 196, 900, 'mx_forest', 0.4);
+  else if (A.sub === 'aqueduct') AudioSys.music(null, 196, 900, 'mx_road', 0.4);
+  else if (A.sub === 'templum' || A.sub === 'forum') AudioSys.music(null, 196, 900, 'mx_dungeon', 0.45);
   else if (A.kind === 'cata' || A.sub === 'necro') AudioSys.music(null, 196, 900, A.trk2 || (A.trk2 = U.pick(['mx_dungeon', 'px_ritual'])), 0.6);
   else AudioSys.stopMusic();
 }
@@ -3242,7 +3245,7 @@ function CombatScene(list, opts = {}) {
     describe() { return this.alive().map(e => `${e.D.n} ${relName(e.angle)}`).join(', '); },
     enter() {
       AudioSys.stopMusic(); AudioSys.ui.fight(); Haptic.v([50, 50, 50]); if (list.some(x => x.e === 'cerberus')) AudioSys.sample('n_gates', { vol: 0.7 }); else if (opts.ambush) AudioSys.danger();
-      if (opts.boss || list.some(x => x.boss)) { setTimeout(() => AudioSys.ui.stinger(), 350); if (CFG.bossMusic !== false) setTimeout(() => { if (!this.ended) AudioSys.music(null, 196, 900, U.pick(['px_swords', 'px_barbossa', 'px_lastshot']), 0.28); }, 3200); }
+      if (opts.boss || list.some(x => x.boss)) { setTimeout(() => AudioSys.ui.stinger(), 350); if (CFG.bossMusic !== false) setTimeout(() => { if (!this.ended) AudioSys.music(null, 196, 900, list.some(x => ['voiceless', 'cerberus', 'centurio', 'minotaur'].includes(x.e)) ? 'mx_intro' : U.pick(['px_swords', 'px_barbossa', 'px_lastshot']), 0.28); }, 3200); }
       const n = Math.min(list.length, 6), A = { 1: [0], 2: [0, Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2], 3: [0, -Math.PI / 2, Math.PI / 2], 4: [0, -Math.PI / 2, Math.PI / 2, Math.PI], 5: [0, -Math.PI / 2, Math.PI / 2, -Math.PI / 4, Math.PI / 4], 6: [0, -Math.PI / 2, Math.PI / 2, -Math.PI / 4, Math.PI / 4, Math.PI] }[n];
       list.slice(0, 6).forEach((x, i) => { const e = mkEnemy(x, A[i], opts); e.timer = U.rnd(1.8, 3) + i * (n > 4 ? 0.7 : 1.3); MECH.init(this, e); this.en.push(e); P.seen[x.e] = 1; });
       if (opts.ambush && this.en[0]) this.en[0].timer = 0.2;
