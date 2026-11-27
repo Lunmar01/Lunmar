@@ -1436,7 +1436,7 @@ const NAMES = ['วายุ', 'ภูผา', 'ธารา', 'อรุณ', '
 const G = { p: null, slot: null, area: null, pos: { x: 4, y: 4, f: 0 }, endless: null };
 function newPlayer() {
   return {
-    v: 1, name: 'ผู้พิทักษ์', bless: 'sound', weapon: 'sword', wlv: 0, gem: null,
+    v: 1, xpv: 2, name: 'ผู้พิทักษ์', bless: 'sound', weapon: 'sword', wlv: 0, gem: null,
     stats: { STR: 5, AGI: 5, VIT: 5, SEN: 5, MND: 5, LUK: 5 }, free: 10, level: 1, xp: 0, hp: 1, sp: 1, coins: 60,
     mats: {}, items: { hpPot: 3, spPot: 1, antidote: 1 }, armor: 'cloth', armorDur: 100,
     own: { armor: ['cloth'], acc: [], sec: [] }, acc: { ring1: null, ring2: null, neck: null, head: null }, buffs: {}, ecoins: [], sec: null, lantern: false,
@@ -1467,12 +1467,13 @@ function S() {
 function clampHp() { const st = S(); G.p.hp = U.clamp(G.p.hp, 0, st.maxHp); G.p.sp = U.clamp(G.p.sp, 0, st.maxSp); }
 function fullHeal() { const st = S(); G.p.hp = st.maxHp; G.p.sp = st.maxSp; }
 function healHp(n) { const st = S(); G.p.hp = Math.min(st.maxHp, G.p.hp + n); }
-const xpNeed = L => Math.round(40 + 18 * L + 2.6 * L * L);
+const xpNeedOld = L => Math.round(40 + 18 * L + 2.6 * L * L);
+const xpNeed = L => Math.round((80 + 36 * L + 5.2 * L * L) * (CFG.diff === 0 ? 0.8 : 1));
 function gainXp(n) {
   const p = G.p; if (hasShard(6)) n *= 1.3; if (hasAcc('laurel')) n *= 1.2; n = Math.round(n); p.xp += n; let txt = '';
   const cap = p.flags.final ? 99 : 50;
   while (p.level < cap && p.xp >= xpNeed(p.level)) {
-    p.xp -= xpNeed(p.level); p.level++; p.free += 3; fullHeal();
+    p.xp -= xpNeed(p.level); p.level++; p.free += 3; { const st = S(); p.hp = Math.min(st.maxHp, p.hp + st.maxHp * 0.25); p.sp = Math.min(st.maxSp, p.sp + st.maxSp * 0.25); }
     txt += ` เลเวลอัป! ตอนนี้เลเวล ${p.level} ได้แต้มค่าพลัง 3 แต้ม`;
     if (p.level === 20 || p.level === 40) txt += ' ช่องพลังพิเศษเพิ่มขึ้น 1 ช่อง';
     setTimeout(() => { AudioSys.ui.levelup(); Haptic.v([60, 60, 120]); }, 300);
@@ -1566,8 +1567,9 @@ function giveReward(r, src) {
     if (slot) p.acc[slot] = r.acc; out.push(a.n + (slot ? ' สวมใส่แล้ว' : ''));
   }
   if (r.flag) p.flags[r.flag] = 1;
-  let lv = r.xp ? gainXp(r.xp) : '';
-  if (r.xp) out.unshift(`ค่าประสบการณ์ ${r.xp}`);
+  const qxp = r.xp ? Math.round(r.xp * 0.7) : 0;
+  let lv = qxp ? gainXp(qxp) : '';
+  if (qxp) out.unshift(`ค่าประสบการณ์ ${qxp}`);
   clampHp();
   return 'ได้รับ ' + out.join(', ') + '.' + lv;
 }
@@ -1615,7 +1617,7 @@ function areaLevel(c, extra) { const [a, b] = CITIES[c].lv; return Math.round(U.
 function spawnEnemies(A, list, n, lvFn, place) {
   const want = [];
   for (const id of activeQuests()) { const d = qdef(id); if (d.c !== A.c) continue; d.o.forEach(o => { if (o.t === 'kill' && o.e && list.includes(o.e)) want.push(o.e); }); }
-  for (let i = 0; i < n; i++) { const pos = place(4); if (!pos) break; const e = i < 2 && want.length ? U.pick(want) : U.pick(list); A.enemies.push({ e, lv: lvFn(), x: pos.x, y: pos.y, t: U.rnd(1, 3), aggro: false }); }
+  for (let i = 0; i < n; i++) { const pos = place(4); if (!pos) break; const e = i < 2 && want.length ? U.pick(want) : U.pick(list); { const elite = A.kind !== 'town' && A.kind !== 'via' && !ENEMIES[e].boss && Math.random() < 0.08; A.enemies.push({ e, lv: lvFn() + (elite ? 3 : 0), elite, x: pos.x, y: pos.y, t: U.rnd(1, 3), aggro: false }); }; }
 }
 
 // ===================== ฉากสำรวจ =====================
@@ -1667,6 +1669,7 @@ function AreaScene(A) {
     },
     enter() {
       this.zoneN = (zoneAt(A, G.pos.x, G.pos.y) || {}).n; if (WALK() === 'north') G.pos.f = 0;
+      if (!this.warned && A.enemies.length) { this.warned = 1; const mx = Math.max(...A.enemies.map(e => e.lv)), g = mx - G.p.level, el = A.enemies.filter(e => e.elite).length; if (g >= 5 || el) setTimeout(() => { if (Game.top() === this) sayq((g >= 5 ? `ระวัง มอนสเตอร์ที่นี่เลเวลสูงสุด ${mx} สูงกว่าคุณ ${g} ระดับ${g >= 8 ? ' อันตรายมาก' : ''}. ` : '') + (el ? `ได้ยินเสียงหัวหน้าฝูง ${el} ตัว` : '')); }, 1800); }
       if (!CFG.walkAsked) setTimeout(() => { if (Game.top() === this && !CFG.walkAsked) Game.push(WalkAskMenu()); }, 2500);
       areaAmbient(A); areaWeather(A); this.night = isNight();
       A.trk = U.pick(A.c === 4 ? ['mus_4', 'mus_11', 'px_hesapirate', 'px_medallion', 'px_blackpearl'] : ['mus_' + A.c, 'mus_' + (A.c + 7)]);
@@ -1814,7 +1817,7 @@ function AreaScene(A) {
       if (Game.top() !== this) return;
       const group = [en, ...A.enemies.filter(o => o !== en && cheb(o.x - en.x, o.y - en.y) <= 2)].slice(0, 3);
       this.auto = null;
-      let list = group.map(g => ({ e: g.e, lv: g.lv }));
+      let list = group.map(g => ({ e: g.e, lv: g.lv, elite: g.elite }));
       if (ENEMIES[en.e].mech === 'swarm') list = [...Array(5)].map(() => ({ e: en.e, lv: en.lv })).concat(list.slice(1, 2));
       Game.push(CombatScene(list, {
         city: A.c, ambush: eo.ambush, dark: A.kind === 'cata', onWin: txt => { A.enemies = A.enemies.filter(o => !group.includes(o)); say(txt); },
@@ -3226,8 +3229,9 @@ function walkVia(to) {
 const HINT = { lunge: 'หลบ!', heavy: 'ตั้งรับ!', swift: 'พุ่งสวน!', net: 'ตั้งรับตาข่าย!', under: 'กระโดด!' };
 function mkEnemy(x, angle, opts) {
   const D = ENEMIES[x.e], L = x.lv, boss = !!x.boss;
-  const hp = Math.round((180 + 28 * L) * D.hp * (boss ? 5.5 : 1) * (opts.tutorial ? 0.6 : 1));
-  return { id: x.e, D, lv: L, hp, max: hp, atk: (10 + 4.5 * L) * (boss ? 1.3 : 1) * (opts.tutorial ? 0.5 : 1), def: L, angle, st: 'idle', timer: 0, wt: 0, rec: 0, stun: 0, slow: 0, dots: [], boss, idleT: U.rnd(0.5, 2), type: null };
+  const elite = !!x.elite && !boss;
+  const hp = Math.round((200 + 32 * L) * D.hp * (boss ? 7 : 1) * (elite ? 1.8 : 1) * (opts.tutorial ? 0.6 : 1));
+  return { id: x.e, D, lv: L, elite, hp, max: hp, atk: (11 + 4.95 * L) * (boss ? 1.4 : 1) * (elite ? 1.15 : 1) * (opts.tutorial ? 0.5 : 1), def: Math.round(L * 1.2 + 8), angle, st: 'idle', timer: 0, wt: 0, rec: 0, stun: 0, slow: 0, dots: [], boss, idleT: U.rnd(0.5, 2), type: null };
 }
 function hpWord(e) { const r = e.hp / e.max; return r > 0.9 ? 'เลือดเต็ม' : r > 0.6 ? 'เลือดมากกว่าครึ่ง' : r > 0.35 ? 'เลือดราวครึ่งหนึ่ง' : r > 0.15 ? 'เลือดน้อย' : 'ใกล้ตาย'; }
 function CombatScene(list, opts = {}) {
@@ -3253,7 +3257,7 @@ function CombatScene(list, opts = {}) {
     hint: 'แตะ = โจมตีธรรมดา · แตะ 2 ครั้ง = ผนึกพลัง · ปัดซ้าย/ขวา = หลบ · ปัดลง = ตั้งรับ · ปัดขึ้น = พุ่งสวน · แตะค้างแล้วปล่อยเมื่อได้ยินติ๊ง = ทักษะ',
     alive() { return this.en.filter(e => e.hp > 0); },
     target() { const a = this.alive(); return a.find(e => Math.abs(e.angle) < 0.01) || a[0]; },
-    describe() { return this.alive().map(e => `${e.D.n} ${relName(e.angle)}`).join(', '); },
+    describe() { return this.alive().map(e => `${e.elite ? 'หัวหน้าฝูง' : ''}${e.D.n} ${relName(e.angle)}`).join(', '); },
     enter() {
       AudioSys.stopMusic(); AudioSys.ui.fight(); Haptic.v([50, 50, 50]); if (list.some(x => x.e === 'cerberus')) AudioSys.sample('n_gates', { vol: 0.7 }); else if (opts.ambush) AudioSys.danger();
       if (opts.boss || list.some(x => x.boss)) { setTimeout(() => AudioSys.ui.stinger(), 350); if (CFG.bossMusic !== false) setTimeout(() => { if (!this.ended) AudioSys.music(null, 196, 900, list.some(x => ['voiceless', 'cerberus', 'centurio', 'minotaur'].includes(x.e)) ? 'mx_intro' : U.pick(['px_swords', 'px_barbossa', 'px_lastshot']), 0.28); }, 3200); }
@@ -3262,10 +3266,10 @@ function CombatScene(list, opts = {}) {
       if (opts.ambush && this.en[0]) this.en[0].timer = 0.2;
       if (P.garum) { P.garum = false; this.buffs.garum = 999; const sm = this.en.filter(e => e.D.small && !e.boss); if (sm.length < this.en.length) sm.forEach(e => { e.hp = 0; e.fled = true; }); if (sm.length && sm.length < this.en.length) sayq('กลิ่นน้ำปลาโรมันทำให้ศัตรูตัวเล็กหนีไป'); }
       this.t = opts.ambush ? -0.3 : -(CFG.verbose ? 2.2 : 1.2);
-      say((opts.intro ? opts.intro + ' ' : 'การต่อสู้! ') + this.describe());
+      say((opts.intro ? opts.intro + ' ' : 'การต่อสู้! ') + this.describe() + dangerText(this.alive()));
       if (list.some(x => x.e === 'voiceless')) AudioSys.sample('necro_intro', { vol: 0.9 });
       if (hasPower('timestop')) { this.buffs.timestop = 6; AudioSys.freeze({}); }
-      this.en.forEach((e, i) => setTimeout(() => AudioSys.voice(e.D.arch, e.D.p, 'idle', { id: e.id, angle: e.angle, dist: 1, weapon: P.weapon }), 300 + i * 400));
+      this.en.forEach((e, i) => setTimeout(() => AudioSys.voice(e.D.arch, e.D.p, 'idle', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 1, weapon: P.weapon }), 300 + i * 400));
     },
     resume() { },
     onGesture(g) {
@@ -3294,15 +3298,15 @@ function CombatScene(list, opts = {}) {
     deny(t) { AudioSys.ui.error(); Haptic.err(); say(t); },
     info() {
       const st = S();
-      say(`เลือด ${Math.round(P.hp)} จาก ${st.maxHp}. พลังจิต ${Math.round(P.sp)}. พลังสุดยอด ${Math.floor(this.ult)} เปอร์เซ็นต์.${this.ppoison > 0 ? ' ติดพิษ.' : ''} ศัตรู: ` + this.alive().map(e => `${e.D.n} ${relName(e.angle)} ${hpWord(e)}`).join(', '));
+      say(`เลือด ${Math.round(P.hp)} จาก ${st.maxHp}. พลังจิต ${Math.round(P.sp)}. พลังสุดยอด ${Math.floor(this.ult)} เปอร์เซ็นต์.${this.ppoison > 0 ? ' ติดพิษ.' : ''} ศัตรู: ` + this.alive().map(e => `${e.elite ? 'หัวหน้าฝูง ' : ''}${e.D.n} เลเวล ${e.lv} ${dangerWord(e)} ${relName(e.angle)} ${hpWord(e)}`).join(', '));
     },
     nextDelay(e) { return (e.D.mech === 'swarm' ? 0.6 : e.D.arch === 'mirror' ? 0.8 : 1) * U.rnd(2.2, 4) * DIFF[CFG.diff].delay * (opts.tutorial ? 1.4 : 1) * (e.boss ? (this.phase2 ? 0.65 : 0.85) : 1) + (this.alive().length > 1 ? 0.7 : 0); },
     windup(e) {
       this.token = e; e.st = 'windup'; e.type = U.pick(e.D.atk);
-      let w = CFG.react * DIFF[CFG.diff].win * (opts.tutorial ? 1.6 : 1) + (P.weapon === 'mace' ? 0.3 : 0); if (e.D.quiet) w *= 0.85; e.wt = w;
+      let w = CFG.react * DIFF[CFG.diff].win * (opts.tutorial ? 1.6 : 1) * gapFx(e).win + (P.weapon === 'mace' ? 0.3 : 0); if (e.D.quiet) w *= 0.85; e.wt = w;
       const mw = MECH.windup(this, e); if (mw === 'feint') return;
       const g = (e.D.quiet ? 0.5 : 1) * (opts.dark ? 0.5 : 1);
-      if (!mw) { AudioSys.voice(e.D.arch, e.D.p, 'warn', { id: e.id, angle: e.angle, dist: 1, weapon: P.weapon, gain: g }); AudioSys.warnCue(e.type, { angle: e.angle, dist: 1, gain: g }); }
+      if (!mw) { AudioSys.voice(e.D.arch, e.D.p, 'warn', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 1, weapon: P.weapon, gain: g }); AudioSys.warnCue(e.type, { angle: e.angle, dist: 1, gain: g }); }
       if (CFG.hints || opts.tutorial) say(HINT[e.type] + (opts.tutorial ? (e.type === 'lunge' ? ' ปัดซ้ายหรือขวา' : e.type === 'heavy' ? ' ปัดลง' : ' ปัดขึ้น') : '') + (this.en.length > 1 && e.D.mech === 'triple' ? ' ' + relName(e.angle) : ''));
     },
     respond(kind, side) {
@@ -3360,7 +3364,7 @@ function CombatScene(list, opts = {}) {
     checkUlt() { if (this.ult >= 100 && !this.ultReady && P.wlv >= 8) { this.ultReady = true; if (!AudioSys.sample('x_powerup', { vol: 0.7 })) { AudioSys.ui.ding(); setTimeout(() => AudioSys.ui.ding(), 200); } if (!this.token) sayq('พลังสุดยอดเต็ม วาดวงกลมเพื่อใช้'); } },
     hurt(e, mult, msg) {
       const st = S(), ar = ARMORS[P.armor];
-      let dmg = e.atk * ({ lunge: 1, heavy: 1.4, swift: 0.8, net: 0.7, under: 1.3 }[e.type] || 1) * mult * DIFF[CFG.diff].dmg * U.rnd(0.9, 1.1) * (100 / (100 + st.def));
+      let dmg = e.atk * ({ lunge: 1, heavy: 1.4, swift: 0.8, net: 0.7, under: 1.3 }[e.type] || 1) * mult * DIFF[CFG.diff].dmg * gapFx(e).hurt * U.rnd(0.9, 1.1) * (100 / (100 + st.def));
       if (ar.lungeRed && e.type === 'lunge') dmg *= 1 - ar.lungeRed; if (ar.heavyRed && e.type === 'heavy') dmg *= 1 - ar.heavyRed;
       if (e.D.el === 'fire' && buffOn('oleum')) dmg *= 0.6; if (e.D.mech === 'shove' && e.type === 'lunge') { dmg *= 1.6; msg = 'ถูกผลักเกือบตกสะพาน! ' + msg; }
       if (hasPower('stoneskin')) dmg *= 0.85; if (ar.red) dmg *= 1 - ar.red; if (this.buffs.rage) dmg *= 0.7; if (e.D.el && ar.res === e.D.el) dmg *= 0.7;
@@ -3395,8 +3399,8 @@ function CombatScene(list, opts = {}) {
       if (this.atkCd > 0) { AudioSys.tone(400, 0.03, { gain: 0.05 }); return; }
       const e = this.target(); if (!e) return;
       const st = S(), w = st.w; let cd = st.cd * (kind === 'heavy' ? 1.8 : kind === 'dash' ? 1.3 : 1); if (this.buffs.rage) cd *= 0.8; this.atkCd = cd;
-      const miss = 0.12 - w.reach * 0.012 + (kind === 'heavy' ? 0.04 : 0);
-      if (Math.random() < miss) { AudioSys.weapon(P.weapon, 'miss', { angle: e.angle }); this.chain = 0; if (CFG.verbose && !this.token) say('พลาด'); return; }
+      const gf = gapFx(e), miss = 0.12 - w.reach * 0.012 + (kind === 'heavy' ? 0.04 : 0) + gf.miss;
+      if (Math.random() < miss) { AudioSys.weapon(P.weapon, 'miss', { angle: e.angle }); this.chain = 0; if (CFG.diff === 2 && gf.gap > 0 && Math.random() < 0.3) { this.stagger = 0.7; say('พลาดจนเสียหลัก'); return; } if (CFG.verbose && !this.token) say('พลาด'); return; }
       if (kind === 'heavy' && CFG.voice === 'm') AudioSys.sample(['x_grunt1', 'x_grunt2', 'x_grunt3', 'x_grunt4'], { vol: 0.5 });
       this.hit(e, { light: 1, heavy: 1.9, dash: 1.3 }[kind], { heavy: kind === 'heavy' });
     },
@@ -3412,10 +3416,10 @@ function CombatScene(list, opts = {}) {
       if (o.skill) mult *= 1 + st.s.MND * 0.02;
       let crit = Math.random() * 100 < st.crit;
       if (P.weapon === 'dagger' && !o.skill) { this.chain++; if (this.chain >= 6) { crit = true; this.chain = 0; } }
-      let dmg = Math.max(1, Math.round(atk * mult * (100 / (100 + (e.defBroken ? 0 : e.def))) * U.rnd(0.9, 1.1) * (crit ? 1.8 : 1)));
+      let dmg = Math.max(1, Math.round(atk * mult * gapFx(e).deal * (100 / (100 + (e.defBroken ? 0 : e.def))) * U.rnd(0.9, 1.1) * (crit ? 1.8 : 1)));
       e.hp -= dmg; MECH.afterHit(this, e);
       AudioSys.weapon(P.weapon, crit ? 'crit' : 'hit', { angle: e.angle });
-      setTimeout(() => AudioSys.voice(e.D.arch, e.D.p, 'hurt', { id: e.id, angle: e.angle, dist: 1, weapon: P.weapon }), 120);
+      setTimeout(() => AudioSys.voice(e.D.arch, e.D.p, 'hurt', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 1, weapon: P.weapon }), 120);
       crit ? Haptic.crit() : Haptic.ok();
       this.ult = Math.min(100, this.ult + (o.skill ? 3 : 7)); this.checkUlt();
       const ls = (P.weapon === 'sickle' ? 0.05 : 0) + (P.gem === 'onyx' ? 0.05 : 0); if (ls) { healHp(dmg * ls); if (Math.random() < 0.25) AudioSys.sample('vamp_drain', { vol: 0.4 }); }
@@ -3437,14 +3441,14 @@ function CombatScene(list, opts = {}) {
     dot(e, type, sec) { const ex = e.dots.find(d => d.type === type); if (ex) ex.t = Math.max(ex.t, sec || 4); else e.dots.push({ type, t: sec || (type === 'poison' ? 8 : 4), k: 0 }); type === 'burn' ? AudioSys.burn({ angle: e.angle }) : AudioSys.poison({ angle: e.angle }); },
     bossPhase(e) {
       if (!e.boss || this.phase2 || e.hp > e.max * 0.5) return;
-      this.phase2 = true; AudioSys.sample('x_slowhit', { vol: 0.7 }); AudioSys.voice(e.D.arch, e.D.p, 'warn', { id: e.id, angle: e.angle, dist: 0.5, weapon: P.weapon }); Haptic.low();
+      this.phase2 = true; AudioSys.sample('x_slowhit', { vol: 0.7 }); AudioSys.voice(e.D.arch, e.D.p, 'warn', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 0.5, weapon: P.weapon }); Haptic.low();
       let t = e.D.n + 'โกรธจัด! โจมตีเร็วขึ้น';
       if (e.D.summon) { const free = [-Math.PI / 2, Math.PI / 2].filter(a => !this.alive().some(x => Math.abs(x.angle - a) < 0.1)); free.forEach(a => { const m = mkEnemy({ e: e.D.summon, lv: Math.max(1, e.lv - 4) }, a, opts); m.timer = U.rnd(2, 4); MECH.init(this, m); this.en.push(m); }); if (free.length) t += ' และเรียก' + ENEMIES[e.D.summon].n + 'มาช่วย ทาง' + free.map(relName).join(' และ '); }
       if (e.id === 'voiceless') AudioSys.sample('necro_laugh', { angle: e.angle }); else if (e.D.summon) AudioSys.sample('reassemble', { angle: e.angle });
       sayq(t);
     },
     kill(e) {
-      AudioSys.voice(e.D.arch, e.D.p, 'die', { id: e.id, angle: e.angle, dist: 1, weapon: P.weapon }); if (!e.D.small) AudioSys.bodyfall({ angle: e.angle, dist: 1 }); if (this.token === e) this.token = null;
+      AudioSys.voice(e.D.arch, e.D.p, 'die', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 1, weapon: P.weapon }); if (!e.D.small) AudioSys.bodyfall({ angle: e.angle, dist: 1 }); if (this.token === e) this.token = null;
       this.killed.push(e);
       const a = this.alive();
       if (!a.length) { this.over = true; say('ปราบ' + e.D.n + 'ได้'); setTimeout(() => this.end('win'), 1100); return; }
@@ -3527,7 +3531,7 @@ function CombatScene(list, opts = {}) {
       ], { onBack: () => { Game.pop(true); say('สู้ต่อ'); } }));
     },
     flee() {
-      if (Math.random() < 0.6 + (P.bless === 'wind' ? 0.25 : 0) + S().s.AGI * 0.005) { this.end('flee'); }
+      if (Math.random() < 0.6 + (P.bless === 'wind' ? 0.25 : 0) + S().s.AGI * 0.005 - Math.max(0, ...this.alive().map(e => gapFx(e).gap)) * 0.03) { this.end('flee'); }
       else { say('หนีไม่พ้น!'); const e = this.alive()[0]; if (e && !this.token) e.timer = 0; }
     },
     tick(dt) {
@@ -3549,7 +3553,7 @@ function CombatScene(list, opts = {}) {
         if (e.slow > 0) e.slow -= dt;
         const spd = (e.slow > 0 || this.buffs.timestop) ? 0.55 : 1;
         e.idleT -= dt;
-        if (e.idleT <= 0) { e.idleT = U.rnd(2.5, 4); if (e.st === 'idle') AudioSys.voice(e.D.arch, e.D.p, 'idle', { id: e.id, angle: e.angle, dist: 1, weapon: P.weapon, gain: e.D.quiet ? 0.5 : 1 }); if (e.hp < e.max * 0.25) setTimeout(() => AudioSys.voice('breath', 0, 'idle', { angle: e.angle, dist: 1 }), 700); }
+        if (e.idleT <= 0) { e.idleT = U.rnd(2.5, 4); if (e.st === 'idle') AudioSys.voice(e.D.arch, e.D.p, 'idle', { id: e.id, rate: e.elite ? 0.82 : undefined, angle: e.angle, dist: 1, weapon: P.weapon, gain: e.D.quiet ? 0.5 : 1 }); if (e.hp < e.max * 0.25) setTimeout(() => AudioSys.voice('breath', 0, 'idle', { angle: e.angle, dist: 1 }), 700); }
         if (e.st === 'idle') { e.timer -= dt * spd; if (e.timer <= 0) { if (!this.token) this.windup(e); else e.timer = 0.5; } }
         else if (e.st === 'windup') { e.wt -= dt; if (e.wt <= 0) this.resolve(e, null); if (this.over) return; }
         else if (e.st === 'recover') { e.rec -= dt; if (e.rec <= 0) { e.st = 'idle'; e.timer = this.nextDelay(e); } }
@@ -3562,13 +3566,14 @@ function CombatScene(list, opts = {}) {
         AudioSys.ui.victory(); Haptic.v([60, 40, 60, 40, 120]);
         let xp = 0, coins = 0; const drops = {};
         for (const e of this.killed.filter(k => !k.fled)) {
-          xp += (10 + 5 * e.lv) * (e.boss ? 8 : 1) * (opts.xpMul || 1); coins += (4 + 2 * e.lv) * (e.boss ? 10 : 1) * (opts.xpMul || 1);
+          xp += (10 + 5 * e.lv) * (e.boss ? 8 : 1) * (e.elite ? 2.5 : 1) * gapFx(e).xp * (opts.xpMul || 1); coins += (4 + 2 * e.lv) * (e.boss ? 10 : 1) * (e.elite ? 2 : 1) * (opts.xpMul || 1);
+          if (e.elite) { if (Math.random() < 0.5) { P.items.potion = (P.items.potion || 0) + 1; drops.__potion = (drops.__potion || 0) + 1; } else { const m = (e.D.drop || [])[0]; if (m) drops[m[0]] = (drops[m[0]] || 0) + 2; } }
           for (const [m, ch] of e.D.drop || []) { const k = e.boss ? U.ri(2, 3) : (Math.random() < ch * (1 + S().s.LUK * 0.02) ? 1 : 0); if (k) drops[m] = (drops[m] || 0) + k; }
         }
-        const got = addCoins(coins); Object.entries(drops).forEach(([m, k]) => addMat(m, k));
+        const got = addCoins(coins); const potGot = drops.__potion; delete drops.__potion; Object.entries(drops).forEach(([m, k]) => addMat(m, k));
         let qm = ''; this.killed.forEach(e => { const m = onKill(e.id, opts.city || P.city); if (m) qm += ' ' + m; });
         const lv = gainXp(xp);
-        const txt = `ชนะ! ได้ค่าประสบการณ์ ${Math.round(xp)} เหรียญ ${got}` + (Object.keys(drops).length ? ' และ' + Object.entries(drops).map(([m, k]) => matName(m) + ' ' + k).join(' ') : '') + '.' + lv + qm;
+        const txt = `ชนะ! ได้ค่าประสบการณ์ ${Math.round(xp)} เหรียญ ${got}` + (potGot ? ' ได้ยาฟื้นเลือดจากหัวหน้าฝูง' : '') + (Object.keys(drops).length ? ' และ' + Object.entries(drops).map(([m, k]) => matName(m) + ' ' + k).join(' ') : '') + '.' + lv + qm;
         if (opts.onWin) opts.onWin(txt); else say(txt);
       } else if (r === 'lose') {
         AudioSys.ui.defeat(); Haptic.v([300, 100, 300]);
@@ -3606,6 +3611,23 @@ function endlessFloor() {
     },
     onLose: () => { const p = G.p; fullHeal(); Game.reset(Story([`คุณหมดสติที่ชั้น ${f} ของขอบไร้สิ้นสุด สถิติลึกที่สุด ชั้น ${p.endlessBest}`], () => { G.endless = null; goTown(7, 'temple'); })); },
   }));
+}
+
+// ===================== ช่องว่างเลเวล =====================
+// gap = เลเวลศัตรู - เลเวลผู้เล่น ผลแรงขึ้นตามระดับความยาก
+const GAPK = [0.5, 1, 1.25];
+function gapFx(e) {
+  const raw = (e.lv || 1) - G.p.level, k = GAPK[CFG.diff] ?? 1, g = raw * k;
+  if (e.D && e.D.boss && raw <= 0) return { gap: raw, hurt: 1, deal: 1, miss: 0, win: 1, xp: raw < -5 ? Math.max(0.3, 1 + 0.08 * (raw + 5)) : 1 };
+  if (g > 0) return { gap: raw, hurt: Math.min(2.6, 1 + 0.11 * g), deal: Math.max(0.5, 1 - 0.035 * g), miss: Math.min(0.3, 0.03 * g), win: Math.max(0.8, 1 - 0.02 * g), xp: Math.min(1.6, 1 + 0.08 * raw) };
+  return { gap: raw, hurt: Math.max(0.6, 1 + 0.03 * g), deal: Math.min(1.3, 1 - 0.02 * g), miss: 0, win: 1, xp: Math.max(0.1, 1 + 0.15 * raw) };
+}
+function dangerWord(e) { const g = (e.lv || 1) - G.p.level; return g >= 8 ? 'อันตรายมาก' : g >= 3 ? 'แข็งกว่า' : g >= -2 ? 'สูสี' : 'อ่อนกว่า'; }
+function dangerText(list) {
+  const e = list.slice().sort((a, b) => b.lv - a.lv)[0]; if (!e) return ''; const g = e.lv - G.p.level;
+  const el = list.find(x => x.elite) ? ' ระวัง มีหัวหน้าฝูง' : '';
+  if (g >= 5) return `. ${e.D.n}เลเวล ${e.lv} สูงกว่าคุณ ${g} ระดับ ${g >= 8 ? 'อันตรายมาก ควรหนี' : 'อันตราย'}` + el;
+  return el;
 }
 
 // ===================== คนในเมือง =====================
@@ -4009,6 +4031,7 @@ function loadSlot(n) {
   const p = store.get('eg_slot' + n); if (!p) return false;
   AudioSys.stopJingle();
   G.p = Object.assign(newPlayer(), p); G.slot = n; G.p.acc = Object.assign({ ring1: null, ring2: null, neck: null, head: null }, G.p.acc); G.p.ecoins = G.p.ecoins || []; G.p.buffs = G.p.buffs || {}; clampHp(); if (G.p.hp <= 0) fullHeal();
+  if (!p.xpv) { const L = G.p.level, f = xpNeedOld(L) ? G.p.xp / xpNeedOld(L) : 0; G.p.xp = Math.round(U.clamp(f, 0, 0.99) * xpNeed(L)); G.p.xpv = 2; }
   goTown(G.p.city); return true;
 }
 
