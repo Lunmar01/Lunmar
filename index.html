@@ -1457,8 +1457,8 @@ function S() {
   let maxHp = 100 + s.VIT * 12 + L * 8; if (hasShard(2)) maxHp *= 1.2; if (hasAcc('stoneheart')) maxHp += 100;
   let maxSp = 50 + s.MND * 6 + L * 3; if (hasShard(4)) maxSp *= 1.25; if (hasAcc('blackpearlneck')) maxSp += 30;
   const wpow = w.power * 3 + p.wlv * 4 + (p.wlv >= 5 ? 8 : 0) + (p.wlv >= 10 ? 15 : 0);
-  let atk = wpow + s.STR * 2 + s.AGI; if (hasShard(5)) atk *= 1.15; if (hasAcc('sunring')) atk *= 1.1;
-  let def = ar.def * (p.armorDur > 0 ? 1 : 0.5) + s.VIT * 1.5 + w.defense; if (hasAcc('frostneck')) def += 20; if (hasAcc('freedring')) def += 15;
+  let atk = wpow + s.STR * 2 + s.AGI; if (hasShard(5)) atk *= 1.15; if (buffOn('shrine')) atk *= 1.1; if (hasAcc('sunring')) atk *= 1.1;
+  let def = ar.def * (p.armorDur > 0 ? 1 : 0.5) + s.VIT * 1.5 + w.defense; if (hasAcc('frostneck')) def += 20; if (hasAcc('freedring')) def += 15; if (buffOn('shrine')) def += 10;
   const crit = Math.min(60, 5 + s.SEN * 0.5 + w.crit + (hasAcc('wolffang') ? 5 : 0) + (p.gem === 'diamond' ? 8 : 0));
   const dodge = Math.min(35, 3 + s.AGI * 0.4);
   const hear = 1 + (p.bless === 'sound' ? 1 : 0) + (hasAcc('silverbellneck') ? 0.3 : 0) + s.SEN * 0.015;
@@ -1623,7 +1623,7 @@ function spawnEnemies(A, list, n, lvFn, place) {
 // ===================== ฉากสำรวจ =====================
 function goTown(c, at) {
   const p = G.p; p.city = c; const A = makeTown(c);
-  const ap = at ? A.pois.find(x => x.type === at) : null;
+  const ap = at ? A.pois.find(x => x.type === at || x.to === at) : null;
   G.area = A; G.pos = ap ? { x: ap.x, y: ap.y, f: faceInward(A, ap.x, ap.y) } : { x: A.cx ?? 10, y: A.cy ?? 10, f: 0 };
   Game.reset(AreaScene(A)); saveGame(true);
 }
@@ -1644,6 +1644,8 @@ function AreaScene(A) {
         { id: 'bag', label: 'กระเป๋า', g: [], k: ['b'], btn: false },
         { id: 'quests', label: 'สมุดภารกิจ', g: [], k: ['j'], btn: false },
         { id: 'nav', label: 'นำทางอัตโนมัติ', g: ['circle'], k: ['n'], btn: false },
+        { id: 'pins', label: 'ปักหมุด', g: [], k: ['v'], btn: false },
+        { id: 'mapinfo', label: 'ฟังแผนที่', g: [], k: ['l'], btn: false },
       ];
       if (!fourDir()) return [
         { id: 'walk', label: 'เดินหน้า', g: ['swipe-up'], k: ['ArrowUp', 'w'] },
@@ -1723,6 +1725,8 @@ function AreaScene(A) {
         case 'bag': AudioSys.ui.select(); Game.push(BagMenu()); break;
         case 'quests': AudioSys.ui.select(); Game.push(QuestLog()); break;
         case 'nav': AudioSys.ui.select(); Game.push(GotoMenu(this)); break;
+        case 'pins': AudioSys.ui.select(); Game.push(PinMenu(this)); break;
+        case 'mapinfo': say(mapInfo(A)); break;
       }
     },
     move(sign, silent) {
@@ -1750,7 +1754,7 @@ function AreaScene(A) {
       if (ahead) t += ` ข้างหน้ามี${ahead.p.n} ${ahead.d} ก้าว`;
       say(t);
     },
-    hearR() { return Math.round((A.kind === 'town' ? 9 : A.kind === 'mine' || A.kind === 'cata' ? 5 : 6) * S().hear + (A.kind === 'mine' && G.p.lantern ? 2 : 0)); },
+    hearR() { return Math.round((A.tallUntil > Date.now() ? 2 : 1) * (A.kind === 'town' ? 9 : A.kind === 'mine' || A.kind === 'cata' ? 5 : 6) * S().hear + (A.kind === 'mine' && G.p.lantern ? 2 : 0)); },
     secretR() { return (hasPower('hearing') ? 4 : 2) * (G.p.bless === 'sound' ? 1.5 : 1); },
     around() {
       const { x, y, f } = G.pos, R = this.hearR(), list = [];
@@ -1880,6 +1884,7 @@ function AreaScene(A) {
       this.auto = { path, t: 0, name }; say('เดินไปยัง' + name + ' ' + path.length + ' ก้าว แตะเพื่อหยุด');
     },
     tick(dt) {
+      respawnTick(this, dt); landmarkTick(this, dt); walkerTick(this, dt);
       G.p.play += dt;
       if (isNight() !== this.night) {
         this.night = isNight(); areaAmbient(A);
@@ -1985,7 +1990,7 @@ function compassTarget(sc) {
     if (!nm && A.kind === 'town' && p.unlocked > p.city) { const c = A.pois.find(q => q.type === 'cart'); return { x: c.x, y: c.y, n: 'ลานเกวียน เพื่อไปเมืองถัดไป' }; }
     return { msg: 'ไม่มีภารกิจที่ติดตามอยู่ ไปคุยกับผู้คนในเมืองเพื่อรับภารกิจ' };
   }
-  const d = qdef(id), s = qst(id), poiOf = t => A.pois.find(q => q.type === t);
+  const d = qdef(id), s = qst(id), poiOf = t => A.pois.find(q => q.type === t || q.to === t) || (t === 'exit' ? A.pois.filter(q => q.type === 'cityIn').sort((a, b) => cheb(a.x - G.pos.x, a.y - G.pos.y) - cheb(b.x - G.pos.x, b.y - G.pos.y))[0] : undefined);
   const exitT = () => { const e = poiOf('exit'); return { x: e.x, y: e.y, n: e.n, label: d.t + ': ' }; };
   if (d.c !== p.city) {
     const vi = d.o.findIndex(o => o.t === 'visit' && o.city === p.city);
@@ -2014,7 +2019,7 @@ function compassTarget(sc) {
   let where = o.t === 'kill' ? (o.area ? o.area : C.mine.e.includes(o.e) ? 'mine' : AREA3[d.c].e.includes(o.e) ? 'a3' : 'forest') : o.t === 'find' ? o.area : o.t === 'floor' ? 'mine' : o.t === 'boss' ? C.bossIn : o.t === 'collect' ? (oreMine ? 'mine' : 'forest') : 'forest';
   if (o.t === 'collect' && !oreMine && ['herb', 'wood'].indexOf(o.item) < 0 && !C.forest.e.some(e => (ENEMIES[e].drop || []).some(dd => dd[0] === o.item))) where = 'mine';
   if (o.t === 'collect' && AREA3[d.c] && ['grape', 'marble', 'harpyfeather', 'sirenscale', 'linen', 'bronze', 'gorgonscale'].includes(o.item)) where = o.item === 'grape' || o.item === 'marble' && d.c <= 2 ? 'a3' : where;
-  if (A.kind === 'town') { const g = poiOf(where === 'mine' ? 'gateMine' : where === 'a3' ? 'gateA3' : 'gateForest'); return { x: g.x, y: g.y, n: g.n, label: d.t + ': ' }; }
+  if (A.kind === 'town' || A.kind === 'sub') { const g = poiOf(where === 'mine' ? 'gateMine' : where === 'a3' ? 'gateA3' : 'gateForest'); if (g) return { x: g.x, y: g.y, n: g.n, label: d.t + ': ' }; }
   if (A.kind !== where) return exitT();
   const near = list => list.sort((a, b) => cheb(a.x - x, a.y - y) - cheb(b.x - x, b.y - y))[0];
   if (o.t === 'find') { const t = near(A.pois.filter(q => q.type === 'find' && q.q === id)); if (t && t.hidden) return { msg: `${o.name}ส่งเสียงเบามาก เดินสำรวจแล้วแตะหนึ่งครั้งฟังรอบตัวเมื่อเข้าใกล้` }; if (t) return t; return { msg: 'ไม่พบเป้าหมายในพื้นที่นี้ ลองออกแล้วเข้ามาใหม่' }; }
@@ -2047,7 +2052,7 @@ function poiAction(p, sc) {
     case 'gateMine': if (!(c === 1 && !G.p.flags.mine1)) AudioSys.sample('door_open', { vol: 0.6, dur: 1.5, offset: 0 });
       if (c === 1 && !G.p.flags.mine1) { AudioSys.sample('door_locked') || AudioSys.ui.error(); say('ประตูเหมืองถูกปิดไว้ มาจิสเตอร์ มาร์คุสสั่งห้ามเข้าจนกว่าจะรู้สาเหตุที่ลำธารเงียบ ไปคุยกับมาจิสเตอร์ มาร์คุสก่อน'); break; }
       AudioSys.ui.select(); goArea(makeMine(c, 1)); break;
-    case 'exit': AudioSys.ui.select(); goTown(c, A.kind === 'mine' ? 'gateMine' : 'gateForest'); break;
+    case 'exit': AudioSys.ui.select(); goSuburb(c, A.kind === 'mine' ? 'gateMine' : 'gateForest'); break;
     case 'stairs': AudioSys.beacon('stairs'); goArea(makeMine(c, A.floor + 1)); break;
     case 'herb': { const n = 1 + (Math.random() < S().s.LUK * 0.02 ? 1 : 0); addMat('herb', n); remove(); AudioSys.ui.item(0); say(`เก็บสมุนไพร ${n} ต้น มีทั้งหมด ${cnt('herb')}`); break; }
     case 'tree': Game.push(Rhythm('chop', hits => { const n = hits ? 1 + Math.floor(hits / 2) + (G.p.weapon === 'axe' ? 1 : 0) : 0; if (n) { addMat('wood', n); AudioSys.ui.item(0); remove(); } say(n ? `ได้ไม้ ${n} ท่อน` : 'ตัดไม่เข้าเลย ลองใหม่'); })); break;
@@ -2532,6 +2537,25 @@ function poiAction2(p, sc) {
   const remove = () => { A.pois = A.pois.filter(q => q !== p); };
   switch (p.type) {
     case 'gateA3': enterArea3(c); return true;
+    case 'cityOut': AudioSys.ui.select(); goSuburb(c, p.to); return true;
+    case 'cityIn': AudioSys.ui.select(); goTown(c, p.to); return true;
+    case 'subVia': Game.push(Menu('ทางหลวงโรมัน', [...Array(P.unlocked)].map((_, i) => i + 1).filter(k => k !== c).map(k => ({ label: 'เดินเท้าไป' + CITIES[k].n, value: () => 'ระยะทางประมาณ ' + U.clamp(60 + Math.abs(k - c) * 30, 90, 200) + ' ก้าว', onSelect: () => walkVia(k) })).concat([{ label: 'กลับเข้าเมืองไปที่ลานเกวียน', onSelect: () => goTown(c, 'cart') }]))); return true;
+    case 'rest': restAt(p); return true;
+    case 'citizen': talkCitizen(p, sc); return true;
+    case 'library': openLibrary(); return true;
+    case 'training': openTraining(); return true;
+    case 'fair': door(); openFair(); return true;
+    case 'well': if (p.used) { say('ดื่มน้ำไปแล้ว'); return true; } p.used = 1; healHp(S().maxHp * 0.1); AudioSys.ui.drink(); say('ตักน้ำเย็นจากบ่อมาดื่ม เลือดฟื้นเล็กน้อย'); return true;
+    case 'shrine': if (p.used) { say('สวดไปแล้ว พรยังอยู่กับคุณ'); return true; } p.used = 1; buff('shrine', 300); AudioSys.sample('m_offer', { vol: 0.6 }); AudioSys.ui.heal(); say('คุณสวดขอพรที่' + p.n + ' ได้รับพรแห่งศาลเจ้า พลังโจมตีและการป้องกันเพิ่มขึ้น 5 นาที'); return true;
+    case 'bigtree': { A.tallUntil = Date.now() + 60000; AudioSys.sample('n_chop1', { vol: 0.5 }); const { x, y } = G.pos, en = A.enemies.filter(e => cheb(e.x - x, e.y - y) <= 25), near = en.sort((a, b) => cheb(a.x - x, a.y - y) - cheb(b.x - x, b.y - y)).slice(0, 3); say('คุณปีนขึ้นต้นไม้ยักษ์ ได้ยินเสียงไปไกลทั่วป่า. มีศัตรู ' + en.length + ' ตัวในระยะ 25 ก้าว' + (near.length ? ' ใกล้สุดคือ ' + near.map(e => ENEMIES[e.e].n + ' ' + areaDir(relAngle(e.x - x, e.y - y, G.pos.f)) + ' ' + cheb(e.x - x, e.y - y) + ' ก้าว').join(', ') : '') + '. หูของคุณจะไวเป็นสองเท่าไป 1 นาที'); return true; }
+    case 'cave': enterSub(makeForestCave(c)); return true;
+    case 'caveExit': leaveSub(); return true;
+    case 'miner': say(p.n + ': ' + U.pick(['เคาะผนังแล้วถ้าเสียงก้องเหมือนเหล็ก แปลว่ามีแร่', 'แร่หายากมักอยู่ปลายอุโมงค์แยก ไม่ค่อยอยู่ริมรางหลักหรอก', 'ชั้นสองมีแม่น้ำใต้ดิน ข้ามได้ที่สะพานไม้เท่านั้น', 'ชั้นล่างสุดมีหินถล่มขวาง ต้องฟังหาทางอ้อม', 'ถ้าเหนื่อยก็แวะกระท่อมพักคนงานนะ'])); return true;
+    case 'arenaSand': case 'lanista': openArena(); return true;
+    case 'merchant': openFair(); return true;
+    case 'patrol': if (!p.used) { p.used = 1; healHp(S().maxHp * 0.15); } say('ทหารลาดตระเวน: ถนนเส้นนี้มีโจรชุม ระวังตัวด้วย เอาเสบียงไปบ้าง. เลือดฟื้นเล็กน้อย'); return true;
+    case 'traveler': if (!p.used) { p.used = 1; const r = 20 + 10 * c; addCoins(r); } say('คนเดินทาง: ขอบใจที่บอกทาง ข้าหลงมาตั้งแต่เมื่อวาน รับเหรียญนี้ไว้เถอะ'); AudioSys.ui.coin(); return true;
+    case 'flavor': if (p.heal && !p.used) { p.used = 1; healHp(S().maxHp * p.heal); AudioSys.ui.drink(); } return false;
     case 'thermae': onErrand('thermae'); openThermae(); return true;
     case 'circus': Game.push(ChariotScene()); return true;
     case 'house': {
@@ -2575,7 +2599,7 @@ function poiAction2(p, sc) {
   if (p.type === 'exit' && A.kind === 'via') { say('เดินกลับ' + CITIES[A.c].n); goTown(A.c, 'cart'); return true; }
   if (p.type === 'viaEnd') { const to = A.to; AudioSys.ui.quest(); say('ถึงประตูเมือง' + CITIES[to].n + 'แล้ว'); setTimeout(() => goTown(to, 'cart'), 900); return true; }
   if (p.type === 'mansio') { if (A.rested) { say('พักที่นี่ไปแล้ว รีบเดินทางต่อเถอะ'); return true; } A.rested = 1; healHp(S().maxHp * 0.5); G.p.sp = Math.min(S().maxSp, G.p.sp + S().maxSp * 0.5); AudioSys.ui.heal(); AudioSys.ui.drink(); say('คนเฝ้าจุดพักม้าให้น้ำและขนมปัง เลือดและพลังจิตฟื้นครึ่งหนึ่ง'); return true; }
-  if (p.type === 'exit' && A.kind === 'a3') { goTown(c, 'gateA3'); return true; }
+  if (p.type === 'exit' && A.kind === 'a3') { goSuburb(c, 'gateA3'); return true; }
   if (p.type === 'stairs') [0, 0.3, 0.6].forEach(d => setTimeout(() => AudioSys.step('stairs'), d * 1000));
   if (p.type === 'stairs' && A.kind === 'cata') { G.p.cataBest = Math.max(G.p.cataBest || 0, A.floor + 1); goArea(makeCata(A.floor + 1)); return true; }
   return false;
@@ -2928,18 +2952,37 @@ function zplacer(A, start, dist) {
 }
 function faceInward(A, x, y) { const cx = A.cx ?? Math.floor(A.w / 2), cy = A.cy ?? Math.floor(A.h / 2); const a = Math.atan2(cx - x, -(cy - y)); return ((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8; }
 
-// ===================== เมือง: ผังโรมัน 21 x 21 =====================
-// ประตู: ทิศของประตูแต่ละแบบในแต่ละเมือง (N S W E)
+// ===================== สุ่มแบบกำหนดเมล็ด (ให้ผังเดิมทุกครั้งที่เข้า) =====================
+function withSeed(seed, fn) {
+  const R = Math.random; let s = (seed * 2654435761) >>> 0 || 1;
+  Math.random = () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return (s % 1000000) / 1000000; };
+  try { return fn(); } finally { Math.random = R; }
+}
+// การเกิดใหม่ของมอนสเตอร์ระหว่างอยู่ในพื้นที่
+function setSpawn(A, list, lvFn, max, every) { A.spawn = { list, lvFn, max, every: every || 22 }; A.spawnT = U.rnd(8, 14); }
+function respawnTick(sc, dt) {
+  const A = sc.area; if (!A.spawn) return;
+  A.spawnT -= dt; if (A.spawnT > 0) return;
+  A.spawnT = A.spawn.every * U.rnd(0.7, 1.3);
+  if (A.enemies.length >= A.spawn.max) return;
+  const { x, y } = G.pos, dist = bfs(A, x, y);
+  const cells = [...dist.entries()].filter(([k, d]) => d >= 10 && d <= 30 && !A.water.has(k) && !A.pois.some(p => MK(p.x, p.y) === k) && !A.enemies.some(e => MK(e.x, e.y) === k));
+  if (!cells.length) return;
+  const n = Math.min(A.spawn.max - A.enemies.length, U.ri(1, 2));
+  for (let i = 0; i < n; i++) {
+    const [k] = U.pick(cells), [ex, ey] = k.split(',').map(Number), e = U.pick(A.spawn.list), elite = !ENEMIES[e].boss && Math.random() < 0.08;
+    A.enemies.push({ e, lv: A.spawn.lvFn() + (elite ? 3 : 0), elite, x: ex, y: ey, t: U.rnd(1, 3), aggro: false });
+  }
+}
+
+// ===================== เมือง: ผังโรมัน 51 x 51 =====================
 const TOWN_GATES = {
-  1: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' },
-  2: { gateForest: 'W', gateA3: 'N', gateMine: 'E', cart: 'S' },
-  3: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' },
-  4: { gateForest: 'W', cart: 'N', gateMine: 'E', gateA3: 'S' },
-  5: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' },
-  6: { gateForest: 'W', gateA3: 'N', gateMine: 'E', cart: 'S' },
+  1: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' }, 2: { gateForest: 'W', gateA3: 'N', gateMine: 'E', cart: 'S' },
+  3: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' }, 4: { gateForest: 'W', cart: 'N', gateMine: 'E', gateA3: 'S' },
+  5: { gateForest: 'W', gateMine: 'N', gateA3: 'E', cart: 'S' }, 6: { gateForest: 'W', gateA3: 'N', gateMine: 'E', cart: 'S' },
   7: { gateForest: 'W', gateA3: 'N', gateMine: 'E', cart: 'S' },
 };
-const GATE_XY = { N: [10, 0], S: [10, 20], W: [0, 10], E: [20, 10] };
+const GATE_XY = { N: [25, 0], S: [25, 50], W: [0, 25], E: [50, 25] };
 const GATE_TH = { N: 'เหนือ', S: 'ใต้', W: 'ตะวันตก', E: 'ตะวันออก' };
 const TOWN_STYLE = {
   1: { road: 'dirt', side: 'grass', forum: 'grass', edge: 'รั้วไม้ของหมู่บ้าน', wdef: 'บ้านชาวนา', forumN: 'ลานหมู่บ้าน' },
@@ -2950,279 +2993,514 @@ const TOWN_STYLE = {
   6: { road: 'gravel', side: 'glass', forum: 'marble', edge: 'กำแพงน้ำแข็ง', wdef: 'อาคารหิมะปกคลุม', forumN: 'ฟอรุม' },
   7: { road: 'debris', side: 'debris', forum: 'marble', edge: 'กำแพงเมืองที่พังทลาย', wdef: 'ซากอาคาร', forumN: 'ฟอรุมเก่า' },
 };
+const CITIZEN_N = ['ชาวเมืองชื่อลูเซีย', 'ช่างปั้นหม้อชื่อกาโย', 'แม่ค้าชื่อเทอร์เทีย', 'ทหารปลดประจำการชื่อเซ็กตุส', 'เด็กส่งของชื่อมาร์คัส', 'นักเรียนชื่อเฟลิกซ์', 'คนตักน้ำชื่อดิโด', 'ชาวประมงชื่อนิโก', 'หญิงชราชื่อโอคตาเวีย', 'นักดนตรีชื่อออร์ฟิโอ', 'ทาสที่เป็นอิสระชื่อทีโร', 'คนเลี้ยงแพะชื่อพาน'];
 function makeTown(c) {
-  const C = CITIES[c], ST = TOWN_STYLE[c] || TOWN_STYLE[3];
-  const A = blankArea({ kind: 'town', c, n: C.n, w: 21, h: 21, cx: 10, cy: 10, terrain: C.terrain[0], amb: C.amb[0], edge: ST.edge, wdef: ST.wdef });
+  return withSeed(100 + c, () => makeTown0(c));
+}
+function makeTown0(c) {
+  const C = CITIES[c], ST = TOWN_STYLE[c] || TOWN_STYLE[3], N = 51;
+  const A = blankArea({ kind: 'town', c, n: C.n, w: N, h: N, cx: 25, cy: 25, terrain: C.terrain[0], amb: C.amb[0], edge: ST.edge, wdef: ST.wdef });
   fillAll(A);
-  // ถนนรอบในกำแพง ซอยย่อย ถนนหลักสองสาย และฟอรุม
-  carveRect(A, 1, 1, 19, 1, ST.side); carveRect(A, 1, 19, 19, 19, ST.side); carveRect(A, 1, 1, 1, 19, ST.side); carveRect(A, 19, 1, 19, 19, ST.side);
-  for (const v of [4, 16]) { carveRect(A, v, 1, v, 19, ST.side); carveRect(A, 1, v, 19, v, ST.side); }
-  if (c === 5) for (const v of [7, 13]) { carveRect(A, v, 1, v, 19, 'dirt'); carveRect(A, 1, v, 19, v, 'dirt'); }
-  carveRect(A, 9, 0, 11, 20, ST.road); carveRect(A, 0, 9, 20, 11, ST.road);
-  carveRect(A, 7, 7, 13, 13, ST.forum);
-  for (const x of [0, 20]) for (let y = 0; y < 21; y++) if (A.walls.has(MK(x, y))) A.wname.set(MK(x, y), ST.edge);
-  for (const y of [0, 20]) for (let x = 0; x < 21; x++) if (A.walls.has(MK(x, y))) A.wname.set(MK(x, y), ST.edge);
-  // ปิดประตูทิศที่ไม่ใช้ให้เป็นกำแพง แต่เปิดเฉพาะช่องกลางของถนน
+  carveRect(A, 1, 1, 49, 1, ST.side); carveRect(A, 1, 49, 49, 49, ST.side); carveRect(A, 1, 1, 1, 49, ST.side); carveRect(A, 49, 1, 49, 49, ST.side);
+  for (const v of [8, 16, 34, 42]) { carveRect(A, v, 1, v, 49, ST.side); carveRect(A, 1, v, 49, v, ST.side); }
+  for (const v of [4, 12, 20]) carveRect(A, v, 39, v, 49, 'dirt'); carveRect(A, 1, 45, 23, 45, 'dirt');
+  if (c === 5) for (const v of [4, 12, 20, 30, 38, 46]) { carveRect(A, v, 1, v, 49, 'dirt'); carveRect(A, 1, v, 49, v, 'dirt'); }
+  carveRect(A, 24, 0, 26, 50, ST.road); carveRect(A, 0, 24, 50, 26, ST.road);
+  carveRect(A, 19, 19, 31, 31, ST.forum);
+  carveRect(A, 2, 2, 7, 7, 'grass', 'สวนวิลล่า'); carveRect(A, 9, 2, 15, 6, 'grass', 'สวนวิลล่า');
+  carveRect(A, 36, 2, 47, 7, 'dirt', 'ลานฝึกทหาร'); carveRect(A, 36, 43, 47, 47, 'concrete', 'โรงละคร'); carveRect(A, 2, 28, 14, 32, 'tile', 'ลานตลาด');
+  for (let i = 0; i < N; i++) for (const [x, y] of [[0, i], [N - 1, i], [i, 0], [i, N - 1]]) if (A.walls.has(MK(x, y))) A.wname.set(MK(x, y), ST.edge);
   for (const d of ['N', 'S', 'W', 'E']) { const [gx, gy] = GATE_XY[d]; for (const o of [-1, 1]) { const x = d === 'N' || d === 'S' ? gx + o : gx, y = d === 'N' || d === 'S' ? gy : gy + o; wallAt(A, x, y, ST.edge); } }
-  // ย่าน
-  zone(A, 'ย่านวิหาร', 0, 0, 8, 8); zone(A, 'ย่านบ้านพัก', 12, 0, 20, 8); zone(A, 'ย่านตลาด', 0, 12, 8, 20, { amb: 'market' }); zone(A, 'ย่านช่างฝีมือ', 12, 12, 20, 20, { amb: 'forge' });
-  zone(A, 'ถนนคาร์โด', 9, 0, 11, 20); zone(A, 'ถนนเดคูมานุส', 0, 9, 20, 11); zone(A, ST.forumN, 7, 7, 13, 13);
-  // ลักษณะเฉพาะของแต่ละเมือง
+  zone(A, 'ย่านคนรวย', 0, 0, 23, 11); zone(A, 'ย่านวิหาร', 0, 12, 23, 23); zone(A, 'ย่านทหาร', 27, 0, 50, 11); zone(A, 'ย่านบ้านพัก', 27, 12, 50, 23);
+  zone(A, 'ย่านตลาด', 0, 27, 23, 38, { amb: 'market' }); zone(A, 'ย่านคนจน', 0, 39, 23, 50); zone(A, 'ย่านช่างฝีมือ', 27, 27, 50, 38, { amb: 'forge' }); zone(A, 'ย่านโรงละครและสนาม', 27, 39, 50, 50);
+  zone(A, 'ถนนคาร์โด', 24, 0, 26, 50); zone(A, 'ถนนเดคูมานุส', 0, 24, 50, 26); zone(A, ST.forumN, 19, 19, 31, 31);
+  zone(A, 'สวนวิลล่า', -1, -1, -1, -1); zone(A, 'ลานฝึกทหาร', -1, -1, -1, -1); zone(A, 'โรงละคร', -1, -1, -1, -1); zone(A, 'ลานตลาด', -1, -1, -1, -1, { amb: 'market' });
+  const fl = (x, y, n, snd, say) => A.pois.push(poi('flavor', x, y, n, snd, { say }));
   if (c === 1) {
-    carveRect(A, 12, 2, 15, 7, 'grass', 'คอกแพะ'); zone(A, 'คอกแพะ', 12, 2, 15, 7);
-    carveRect(A, 18, 1, 18, 19, 'water', 'ริมลำธาร'); zone(A, 'ริมลำธาร', 17, 0, 20, 20); carveRect(A, 17, 9, 19, 11, 'wood');
-    A.pois.push(poi('flavor', 18, 14, 'โรงโม่น้ำ', 'water', { say: 'กังหันโรงโม่น้ำหมุนเอี๊ยดอ๊าด น้ำในลำธารใสเย็น' }), poi('flavor', 13, 5, 'คอกแพะ', 'goat', { say: 'แพะร้องแบ๊ะ ๆ กระดิ่งคอดังกรุ๊งกริ๊ง' }));
+    carveRect(A, 36, 12, 41, 20, 'grass', 'คอกแพะ'); zone(A, 'คอกแพะ', -1, -1, -1, -1);
+    carveRect(A, 46, 1, 46, 49, 'water', 'ริมลำธาร'); zone(A, 'ริมลำธาร', -1, -1, -1, -1); carveRect(A, 43, 24, 49, 26, 'wood');
+    fl(46, 36, 'โรงโม่น้ำ', 'water', 'กังหันโรงโม่น้ำหมุนเอี๊ยดอ๊าด น้ำในลำธารใสเย็น'); fl(38, 16, 'คอกแพะ', 'goat', 'แพะร้องแบ๊ะ ๆ กระดิ่งคอดังกรุ๊งกริ๊ง');
   }
   if (c === 2) {
-    wallRect(A, 17, 0, 20, 20, 'หน้าผาสูงชัน'); carveRect(A, 17, 10, 20, 10, 'rock', 'ทางลงหน้าผา'); zone(A, 'ทางลงหน้าผา', 17, 9, 20, 11);
-    zone(A, 'ริมหน้าผา', 16, 0, 16, 20); zone(A, 'ถนนขั้นบันได', 9, 0, 11, 6);
-    A.pois.push(poi('flavor', 16, 3, 'จุดชมวิวริมหน้าผา', 'wind', { say: 'ลมแรงพัดขึ้นมาจากหุบเขา ระวังอย่าเดินเลยขอบ' }));
+    wallRect(A, 45, 0, 50, 50, 'หน้าผาสูงชัน'); carveRect(A, 45, 25, 50, 25, 'rock', 'ทางลงหน้าผา'); zone(A, 'ทางลงหน้าผา', -1, -1, -1, -1);
+    zone(A, 'ริมหน้าผา', 43, 0, 44, 50); zone(A, 'ถนนขั้นบันได', 24, 0, 26, 15); fl(42, 4, 'จุดชมวิวริมหน้าผา', 'wind', 'ลมแรงพัดขึ้นมาจากหุบเขา ระวังอย่าเดินเลยขอบ');
   }
-  if (c === 3) A.pois.push(poi('flavor', 6, 13, 'แผงตลาดฟอรุม', null, { say: 'พ่อค้าตะโกนขายผ้าไหมและเครื่องเทศ' }), poi('flavor', 13, 7, 'บาซิลิกา', null, { say: 'โถงศาลขนาดใหญ่ เสียงก้องสะท้อนเพดานสูง' }));
+  if (c === 3) { fl(6, 30, 'แผงตลาดฟอรุม', null, 'พ่อค้าตะโกนขายผ้าไหมและเครื่องเทศ'); fl(31, 22, 'บาซิลิกา', null, 'โถงศาลขนาดใหญ่ เสียงก้องสะท้อนเพดานสูง'); }
   if (c === 4) {
-    wallRect(A, 0, 16, 20, 20, 'ทะเล'); carveRect(A, 1, 15, 19, 15, 'wood', 'ท่าเรือ');
-    for (const px of [4, 10, 16]) carveRect(A, px, 15, px, px === 10 ? 20 : 19, 'wood', 'ท่าเทียบเรือ');
-    zone(A, 'ท่าเรือ', 0, 14, 20, 20, { amb: 'harbor' }); zone(A, 'ท่าเทียบเรือ', 0, 16, 20, 20, { amb: 'harbor' });
-    A.pois.push(poi('flavor', 16, 19, 'ประภาคารหินเก่า', 'wind', { say: 'ประภาคารหินตั้งอยู่ปลายท่า เสียงคลื่นกระทบเสาหิน' }), poi('flavor', 4, 19, 'โกดังสินค้า', null, { say: 'ลังไม้และกระสอบเกลือวางซ้อนกันสูง' }));
+    wallRect(A, 0, 42, 50, 50, 'ทะเล'); carveRect(A, 1, 41, 49, 41, 'wood', 'ท่าเรือ');
+    for (const px of [8, 25, 42]) carveRect(A, px, 41, px, px === 25 ? 50 : 49, 'wood', 'ท่าเทียบเรือ');
+    zone(A, 'ท่าเรือ', 0, 40, 50, 41, { amb: 'harbor' }); zone(A, 'ท่าเทียบเรือ', 0, 42, 50, 50, { amb: 'harbor' });
+    fl(42, 49, 'ประภาคารหินเก่า', 'lighthouse', 'ประภาคารหินตั้งอยู่ปลายท่า เสียงคลื่นกระทบเสาหิน'); fl(8, 49, 'โกดังสินค้า', null, 'ลังไม้และกระสอบเกลือวางซ้อนกันสูง');
   }
-  if (c === 5) A.pois.push(poi('flavor', 6, 16, 'ตลาดอูฐ', null, { say: 'อูฐร้องครางต่ำ ๆ กลิ่นเครื่องเทศลอยมาตามลม' }));
-  if (c === 6) { for (let y = 2; y <= 18; y += 3) carve(A, 10, y, 'glass'); A.pois.push(poi('flavor', 16, 4, 'หอระฆังน้ำแข็ง', 'bell', { say: 'ระฆังน้ำแข็งแกว่งตามลม ส่งเสียงใสเย็นยะเยือก' })); }
-  // ประตูเมือง
+  if (c === 5) fl(6, 34, 'ตลาดอูฐ', null, 'อูฐร้องครางต่ำ ๆ กลิ่นเครื่องเทศลอยมาตามลม');
+  if (c === 6) { for (let y = 2; y <= 48; y += 3) carve(A, 25, y, 'glass'); fl(40, 10, 'หอระฆังน้ำแข็ง', 'bell', 'ระฆังน้ำแข็งแกว่งตามลม ส่งเสียงใสเย็นยะเยือก'); }
+  fl(42, 45, 'โรงละคร', null, 'อัฒจันทร์หินครึ่งวงกลม นักแสดงกำลังซ้อมบทกวี'); fl(4, 4, 'สวนวิลล่า', null, 'สวนของคนรวย มีน้ำพุเล็ก ๆ และกลิ่นดอกไม้');
   const G4 = TOWN_GATES[c] || TOWN_GATES[3];
-  const gate = (type, n) => { const d = G4[type], [x, y] = GATE_XY[d]; carve(A, x, y, ST.road); return poi(type, x, y, n + ' ประตูทิศ' + GATE_TH[d], type); };
-  A.pois.push(gate('gateForest', 'ประตูไป' + C.forest.n), gate('gateMine', 'ประตูไป' + C.mine.n), gate('gateA3', 'ประตูไป' + AREA3[c].n), gate('cart', 'ลานเกวียน'));
-  // สถานที่หลัก (ตำแหน่งตามย่าน)
+  for (const [type, d] of Object.entries(G4)) {
+    const [x, y] = GATE_XY[d]; carve(A, x, y, ST.road);
+    if (type === 'cart') A.pois.push(poi('cart', x, y, 'ลานเกวียน ประตูทิศ' + GATE_TH[d], 'cart'));
+    else A.pois.push(poi('cityOut', x, y, 'ประตูเมืองทิศ' + GATE_TH[d] + ' ออกชานเมือง ทางไป' + (type === 'gateForest' ? C.forest.n : type === 'gateMine' ? C.mine.n : AREA3[c].n), type, { to: type, dir: d }));
+  }
   A.pois.push(
-    poi('fountain', 10, 10, c === 5 ? 'บ่อน้ำกลางเมือง' : 'น้ำพุกลางเมือง', 'fountain'), poi('leader', 10, 7, C.leader, 'leader'),
-    poi('temple', 7, 4, 'วิหาร', 'temple'), poi('thermae', 4, 7, 'โรงอาบน้ำ', 'thermae'),
-    poi('inn', 16, 7, 'โรงเตี๊ยม', 'inn'), poi('apothecary', 4, 13, 'ร้านยา', 'apothecary'), poi('smith', 16, 13, 'ร้านช่างตีเหล็ก', 'smith'),
-    poi('npc', 13, 4, NPCS[c][0], 'npc', { idx: 0 }), poi('npc', 7, 16, NPCS[c][1], 'npc', { idx: 1 }), poi('npc', 13, 16, NPCS[c][2], 'npc', { idx: 2 }),
-    poi('npc', 10, 13, NPCS[c][3], 'npc', { idx: 3 }), poi('npc', 13, 10, NPCS[c][4], 'npc', { idx: 4 }), poi('npc', 1, 16, NPCS[c][5], 'npc', { idx: 5 }));
-  if (C.secretIn === 'town' && !G.p.souls.includes(c)) A.pois.push(poi('secret', 5, 1, 'บ่อเก่าหลังวิหาร', 'secret', { hidden: 1 }));
-  if (c === 7 && G.p.flags.final) A.pois.push(poi('endless', 13, 13, 'ประตูสู่ขอบไร้สิ้นสุด', 'endless'));
-  if (c === 3) { A.pois.push(poi('circus', 19, 16, 'สนามแข่งรถม้า', 'circus')); if (!G.p.flags.cata) A.pois.push(poi('cataDoor', 7, 1, 'ประตูหินหลังวิหาร', 'wind', { hidden: 1 })); }
-  for (const id of activeQuests()) { const d = qdef(id); if (d.c === c && d.o[0].t === 'tax') { const s = qst(id), done = s.h || []; [[1, 1], [19, 1], [1, 19], [19, 19]].forEach(([x, y], k) => { if (!done.includes(k) && s.prog[0] < 4) A.pois.push(poi('house', x, y, 'บ้านผู้เสียภาษีหลังที่ ' + (k + 1), 'npc', { q: id, h: k })); }); } }
-  // ซากนคร: ซากกำแพงพังขวางถนน ต้องอ้อมผ่านซอย
+    poi('fountain', 25, 25, c === 5 ? 'บ่อน้ำกลางเมือง' : 'น้ำพุกลางเมือง', 'fountain'), poi('leader', 25, 20, C.leader, 'leader'),
+    poi('temple', 12, 16, 'วิหาร', 'temple'), poi('thermae', 8, 20, 'โรงอาบน้ำ', 'thermae'), poi('library', 12, 8, 'ห้องสมุด', 'press'),
+    poi('training', 42, 8, 'ลานฝึกทหาร', 'smith'), poi('inn', 34, 20, 'โรงเตี๊ยม', 'inn'), poi('apothecary', 8, 30, 'ร้านยา', 'apothecary'),
+    poi('fair', 10, 30, 'ตลาดนัดพ่อค้าเร่', 'chest'), poi('smith', 34, 30, 'ร้านช่างตีเหล็ก', 'smith'), poi('well', 16, 44, 'บ่อน้ำสาธารณะ', 'water'),
+    poi('npc', 42, 16, NPCS[c][0], 'npc', { idx: 0 }), poi('npc', 16, 34, NPCS[c][1], 'npc', { idx: 1 }), poi('npc', 34, 34, NPCS[c][2], 'npc', { idx: 2 }),
+    poi('npc', 25, 30, NPCS[c][3], 'npc', { idx: 3 }), poi('npc', 30, 25, NPCS[c][4], 'npc', { idx: 4 }), poi('npc', 4, 45, NPCS[c][5], 'npc', { idx: 5 }));
+  if (C.secretIn === 'town' && !G.p.souls.includes(c)) A.pois.push(poi('secret', 20, 1, 'บ่อเก่าหลังวิหาร', 'secret', { hidden: 1 }));
+  if (c === 7 && G.p.flags.final) A.pois.push(poi('endless', 30, 30, 'ประตูสู่ขอบไร้สิ้นสุด', 'endless'));
+  if (c === 3) { A.pois.push(poi('circus', 49, 40, 'สนามแข่งรถม้า', 'circus')); if (!G.p.flags.cata) A.pois.push(poi('cataDoor', 12, 1, 'ประตูหินหลังวิหาร', 'wind', { hidden: 1 })); }
+  for (const id of activeQuests()) { const d = qdef(id); if (d.c === c && d.o[0].t === 'tax') { const s = qst(id), done = s.h || []; [[1, 1], [49, 1], [1, 49], [49, 49]].forEach(([x, y], k) => { if (!done.includes(k) && s.prog[0] < 4) A.pois.push(poi('house', x, y, 'บ้านผู้เสียภาษีหลังที่ ' + (k + 1), 'npc', { q: id, h: k })); }); } }
   if (c === 7) {
-    const cand = U.shuffle([...Array(21 * 21)].map((_, i) => [i % 21, Math.floor(i / 21)]).filter(([x, y]) => !A.walls.has(MK(x, y)) && !(x >= 7 && x <= 13 && y >= 7 && y <= 13) && !A.pois.some(p => Math.abs(p.x - x) + Math.abs(p.y - y) <= 1)));
-    let n = 0; const start = { x: 10, y: 10 };
-    for (const [x, y] of cand) { if (n >= 26) break; wallAt(A, x, y, 'ซากกำแพงพังขวางทาง'); const dist = bfs(A, start.x, start.y); if (A.pois.every(p => dist.has(MK(p.x, p.y)))) n++; else carve(A, x, y, 'debris'); }
+    const cand = U.shuffle([...Array(N * N)].map((_, i) => [i % N, Math.floor(i / N)]).filter(([x, y]) => !A.walls.has(MK(x, y)) && !(x >= 19 && x <= 31 && y >= 19 && y <= 31) && !A.pois.some(p => Math.abs(p.x - x) + Math.abs(p.y - y) <= 1)));
+    let n = 0; for (const [x, y] of cand) { if (n >= 70) break; wallAt(A, x, y, 'ซากกำแพงพังขวางทาง'); const dist = bfs(A, 25, 25); if (A.pois.every(p => dist.has(MK(p.x, p.y)))) n++; else carve(A, x, y, 'debris'); }
   }
   A.pois.forEach(p => fixPoi(A, p));
-  ensureReach(A, { x: 10, y: 10 }, A.pois, ST.side);
+  ensureReach(A, { x: 25, y: 25 }, A.pois, ST.side);
+  // ชาวเมืองที่เดินไปมา
+  const dist = bfs(A, 25, 25), streets = [...dist.keys()].filter(k => !A.pois.some(p => MK(p.x, p.y) === k));
+  U.shuffle(CITIZEN_N.slice()).slice(0, 10).forEach(n => { const [x, y] = U.pick(streets).split(',').map(Number); A.pois.push(poi('citizen', x, y, n, 'npc', { walker: 1 })); });
+  A.landmarks = A.pois.filter(p => p.type === 'temple' || p.type === 'fountain');
   return A;
 }
 
-// ===================== ป่า 25 x 25 =====================
+// ===================== ชานเมือง 61 x 61 =====================
+const SUB_XY = { N: [30, 0], S: [30, 60], W: [0, 30], E: [60, 30] };
+const CITY_IN = { N: [30, 17], S: [30, 43], W: [17, 30], E: [43, 30] };
+function makeSuburb(c) {
+  const A = withSeed(200 + c, () => makeSuburb0(c));
+  const start = { x: 30, y: 17, f: 0 }, dist = bfs(A, start.x, start.y), place = zplacer(A, start, dist);
+  const lv = () => areaLevel(c, U.rnd(0, 0.15)), list = CITIES[c].forest.e.slice(0, 2);
+  spawnEnemies(A, list, 10, lv, m => place(Math.max(m, 8), null, (x, y, z) => !(z && z.n === 'ถนนสายหลัก')));
+  if (isNight()) { spawnEnemies(A, ['bandit'], U.ri(2, 4), () => areaLevel(c, 0.3), place); spawnEnemies(A, ['lemures'], U.ri(1, 3), () => areaLevel(c, 0.35), m => place(m, null, 'สุสานริมถนน')); }
+  setSpawn(A, isNight() ? list.concat(['bandit']) : list, lv, 16, 28);
+  return A;
+}
+function makeSuburb0(c) {
+  const C = CITIES[c], N = 61, base = C.terrain[1] === 'sand' ? 'dirt' : C.terrain[1] === 'snow' ? 'gravel' : 'grass';
+  const A = blankArea({ kind: 'sub', c, n: 'ชานเมือง' + C.n, w: N, h: N, cx: 30, cy: 30, terrain: base, amb: c === 1 ? 'village' : c === 4 ? 'harbor' : C.amb[1], wdef: 'ต้นไม้และพุ่มไม้', edge: 'ป่าทึบสุดเขตชานเมือง' });
+  wallRect(A, 18, 18, 42, 42, 'กำแพงเมือง' + C.n);
+  for (const d of ['N', 'S', 'W', 'E']) { const [x, y] = CITY_IN[d]; carve(A, x, y, 'cement'); }
+  carveRect(A, 30, 0, 30, 17, 'cement', 'ถนนสายหลัก'); carveRect(A, 30, 43, 30, 60, 'cement', 'ถนนสายหลัก'); carveRect(A, 0, 30, 17, 30, 'cement', 'ถนนสายหลัก'); carveRect(A, 43, 30, 60, 30, 'cement', 'ถนนสายหลัก');
+  carveRect(A, 17, 17, 43, 17, 'dirt', 'ทางรอบกำแพง'); carveRect(A, 17, 43, 43, 43, 'dirt', 'ทางรอบกำแพง'); carveRect(A, 17, 17, 17, 43, 'dirt', 'ทางรอบกำแพง'); carveRect(A, 43, 17, 43, 43, 'dirt', 'ทางรอบกำแพง');
+  zone(A, 'ถนนสายหลัก', -1, -1, -1, -1); zone(A, 'ทางรอบกำแพง', -1, -1, -1, -1);
+  // ไร่นาและฟาร์ม (ตะวันตกเฉียงเหนือ)
+  for (let y = 3; y <= 13; y += 2) carveRect(A, 3, y, 14, y, 'mud', 'ไร่นา');
+  wallRect(A, 2, 2, 15, 2, 'รั้วไม้ไร่นา'); wallRect(A, 2, 14, 15, 14, 'รั้วไม้ไร่นา'); carve(A, 15, 8, 'dirt'); zone(A, 'ไร่นา', 0, 0, 16, 16, { amb: 'village' });
+  A.pois.push(poi('flavor', 9, 8, 'ฟาร์มชานเมือง', 'goat', { say: 'ชาวนากำลังไถนา วัวร้องมอ ไก่จิกข้าวอยู่ข้างโรงนา' }));
+  // สุสานริมถนน (ตามถนนสายใต้)
+  for (let y = 46; y <= 58; y += 2) { wallAt(A, 28, y, 'หลุมศพหินริมถนน'); wallAt(A, 32, y, 'หลุมศพหินริมถนน'); }
+  zone(A, 'สุสานริมถนน', 26, 44, 34, 60, { amb: 'void' }); A.pois.push(poi('flavor', 31, 52, 'ป้ายหลุมศพโรมัน', null, { say: 'จารึกบนหินเขียนว่า ผู้เดินทางเอ๋ย หยุดสักครู่ แล้วระลึกถึงข้า' }));
+  // ท่อส่งน้ำ (จากมุมตะวันออกเฉียงเหนือเข้าเมือง)
+  for (let i = 0; i <= 15; i++) wallAt(A, 44 + i, 15 - i, 'ซุ้มท่อส่งน้ำ'); zone(A, 'แนวท่อส่งน้ำ', 44, 0, 60, 16);
+  [[50, 9], [55, 4]].forEach(([x, y]) => { carve(A, x, y + 1, base); A.pois.push(poi('flavor', x, y + 1, 'ใต้ซุ้มท่อส่งน้ำ', 'water', { say: 'น้ำไหลซ่าอยู่ในรางหินเหนือหัว เดินตามเสียงน้ำจะไปถึงกำแพงเมือง' })); });
+  // โรงสี เตาเผาอิฐ หมู่บ้านเล็ก
+  wallRect(A, 46, 46, 56, 56, 'บ้านในหมู่บ้าน'); carveRect(A, 47, 47, 55, 55, 'dirt', 'หมู่บ้านเล็ก'); carveRect(A, 46, 51, 46, 51, 'dirt'); carveRect(A, 51, 46, 51, 46, 'dirt');
+  for (const [x, y] of [[49, 49], [53, 49], [49, 53], [53, 53]]) wallAt(A, x, y, 'บ้านในหมู่บ้าน'); zone(A, 'หมู่บ้านเล็ก', -1, -1, -1, -1);
+  A.pois.push(poi('rest', 51, 51, 'กองไฟกลางหมู่บ้าน จุดพัก', 'lighthouse'), poi('citizen', 48, 51, 'ชาวบ้านชื่อซิลวานุส', 'npc', { walker: 0 }));
+  A.pois.push(poi('flavor', 8, 50, 'เตาเผาอิฐ', 'lighthouse', { say: 'ไฟในเตาร้อนระอุ ช่างกำลังเรียงอิฐดินเหนียวเข้าเตา' }), poi('flavor', 52, 38, 'โรงสีข้าว', 'press', { say: 'หินโม่หมุนบดข้าวสาลี ลาเดินวนรอบเสาไม้' }));
+  // ต้นไม้กระจาย
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const k = MK(x, y); if (A.walls.has(k) || A.surf.has(k) || cheb(x - 30, y - 30) <= 13) continue; if (Math.random() < 0.07) wallAt(A, x, y, 'ต้นไม้และพุ่มไม้'); }
+  // ทางออกขอบชานเมือง
+  const G4 = TOWN_GATES[c] || TOWN_GATES[3];
+  for (const [type, d] of Object.entries(G4)) {
+    const [x, y] = SUB_XY[d]; carve(A, x, y, 'cement');
+    if (type === 'cart') A.pois.push(poi('subVia', x, y, 'ทางหลวงโรมัน ทิศ' + GATE_TH[d], 'cart'));
+    else A.pois.push(poi(type, x, y, 'ทางไป' + (type === 'gateForest' ? C.forest.n : type === 'gateMine' ? C.mine.n : AREA3[c].n) + ' ทิศ' + GATE_TH[d], type));
+    const [ix, iy] = CITY_IN[d]; A.pois.push(poi('cityIn', ix, iy, 'ประตูเมืองทิศ' + GATE_TH[d] + ' เข้า' + C.n, 'exit', { to: type }));
+  }
+  zone(A, 'ชานเมืองทิศเหนือ', 0, 0, 60, 16); zone(A, 'ชานเมืองทิศใต้', 0, 44, 60, 60); zone(A, 'ชานเมืองทิศตะวันตก', 0, 17, 16, 43); zone(A, 'ชานเมืองทิศตะวันออก', 44, 17, 60, 43);
+  // จัดลำดับเขต: เขตเฉพาะอยู่ท้าย (ทับเขตกว้าง)
+  const specific = A.zones.filter(z => ['ไร่นา', 'สุสานริมถนน', 'แนวท่อส่งน้ำ'].includes(z.n)); A.zones = A.zones.filter(z => !specific.includes(z)).concat(specific);
+  closeUnreachable(A, { x: 30, y: 17 });
+  A.pois.forEach(p => fixPoi(A, p)); ensureReach(A, { x: 30, y: 17 }, A.pois, 'dirt');
+  A.landmarks = A.pois.filter(p => p.type === 'rest' || p.type === 'cityIn').slice(0, 2);
+  return A;
+}
+function goSuburb(c, at) {
+  const A = makeSuburb(c); G.p.city = c;
+  const p = A.pois.find(q => q.type === at || q.to === at) || A.pois.find(q => q.type === 'cityIn');
+  G.area = A; G.pos = { x: p.x, y: p.y, f: faceInward(A, p.x, p.y) };
+  Game.reset(AreaScene(A)); saveGame(true);
+}
+
+// ===================== ป่า 61 x 61 =====================
 const FOREST_STYLE = {
   1: { floor: 'grass', trail: 'dirt', bank: 'mud', stream: 'ลำธาร', tree: 'ต้นไม้หนาทึบ' },
-  2: { floor: 'leaves', trail: 'gravel', bank: 'rock', stream: 'ลำธารบนเขา', tree: 'ป่าสนหนาทึบ' },
+  2: { floor: 'leaves', trail: 'gravel', bank: 'rock', stream: 'ลำธารบนเขา', tree: 'ป่าสนหนาทึบ', cliff: 1 },
   3: { floor: 'leaves', trail: 'dirt', bank: 'mud', stream: 'ลำธารพิษ', tree: 'พุ่มไม้มีพิษ' },
-  4: { floor: 'swamp', trail: 'wood', bank: 'mud', stream: 'บึงน้ำเค็มลึก', tree: 'ดงโกงกาง' },
+  4: { floor: 'swamp', trail: 'wood', bank: 'mud', stream: 'บึงน้ำเค็มลึก', tree: 'ดงโกงกาง', board: 1 },
   5: { floor: 'dirt', trail: 'dirt', bank: 'mud', stream: 'บ่อทรายดูด', tree: 'เนินทรายสูง' },
   6: { floor: 'gravel', trail: 'gravel', bank: 'glass', stream: 'ลำธารน้ำแข็งแตก', tree: 'ต้นสนหิมะ' },
   7: { floor: 'grass', trail: 'debris', bank: 'mud', stream: 'คูน้ำเก่า', tree: 'ป่ารกบนซากเมือง' },
 };
 function makeForest(c) {
-  const C = CITIES[c], FS = FOREST_STYLE[c] || FOREST_STYLE[1], W = 25, H = 25;
-  const A = blankArea({ kind: 'forest', c, n: C.forest.n, w: W, h: H, cx: 12, cy: 12, terrain: FS.floor, amb: C.amb[1], wdef: FS.tree, edge: 'ป่าทึบสุดเขต' });
-  const start = { x: 12, y: 24, f: 0 };
-  // ลำธารไหลจากตะวันตกไปตะวันออก
-  const ph = Math.random() * 6, sy = x => 12 + Math.round(2 * Math.sin(x / 4 + ph));
-  for (let x = 0; x < W; x++) { wallAt(A, x, sy(x), FS.stream); }
-  // ต้นไม้ตามเขต
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const k = MK(x, y); if (A.walls.has(k)) continue; if (cheb(x - start.x, y - start.y) <= 1) continue;
-    const ds = Math.abs(y - sy(x)), p = y >= 18 ? 0.12 : ds <= 2 ? 0.14 : y <= 9 ? 0.3 : 0.22;
-    if (Math.random() < p) wallAt(A, x, y, FS.tree); else if (ds <= 2) A.surf.set(k, FS.bank);
+  const C = CITIES[c], FS = FOREST_STYLE[c] || FOREST_STYLE[1], N = 61;
+  const A = blankArea({ kind: 'forest', c, n: C.forest.n, w: N, h: N, cx: 30, cy: 30, terrain: FS.floor, amb: C.amb[1], wdef: FS.tree, edge: 'ป่าทึบสุดเขต' });
+  const start = { x: 30, y: 60, f: 0 };
+  const ph = Math.random() * 6, ph2 = Math.random() * 6;
+  const sy1 = x => 40 + Math.round(3 * Math.sin(x / 6 + ph)), sy2 = x => 18 + Math.round(3 * Math.sin(x / 7 + ph2));
+  const lake = { x: U.ri(22, 38), y: 29, r: 4 };
+  const inLake = (x, y) => Math.hypot(x - lake.x, (y - lake.y) * 1.2) <= lake.r;
+  for (let x = 0; x < N; x++) { wallAt(A, x, sy1(x), FS.stream); wallAt(A, x, sy2(x), FS.stream); }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (inLake(x, y)) wallAt(A, x, y, 'ทะเลสาบกลางป่า');
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const k = MK(x, y); if (A.walls.has(k) || cheb(x - start.x, y - start.y) <= 1) continue;
+    const ds = Math.min(Math.abs(y - sy1(x)), Math.abs(y - sy2(x))), dl = Math.hypot(x - lake.x, (y - lake.y) * 1.2) - lake.r;
+    const p = y >= 47 ? 0.12 : dl <= 2.5 ? 0.06 : ds <= 2 ? 0.14 : y <= 15 ? 0.3 : 0.22;
+    if (Math.random() < p) wallAt(A, x, y, FS.tree); else if (ds <= 2 || dl <= 2.5) A.surf.set(k, FS.bank);
   }
-  // ลานโล่งทางเหนือ
-  carveRect(A, 9, 1, 15, 5, 'grass');
-  // สะพานสองจุด และทางเดินหลัก
-  const bx = [U.ri(4, 8), U.ri(16, 20)];
-  bx.forEach((x, i) => carve(A, x, sy(x), i ? 'rock' : 'wood'));
-  // ทางเดิน: แนวนอนเดินเฉพาะในแถบที่ไม่ตัดลำธาร แนวตั้งเดินตรงไปหาสะพาน
-  const hband = (x0, x1, y0, lo, hi) => { let y = y0; for (let x = x0; x !== x1; x += Math.sign(x1 - x0)) { carve(A, x, y, FS.trail); if (Math.random() < 0.25) { const ny = U.clamp(y + U.pick([-1, 1]), lo, hi); carve(A, x, ny, FS.trail); y = ny; } } carve(A, x1, y, FS.trail); return y; };
-  const vline = (x, y0, y1) => { for (let y = y0; y !== y1; y += Math.sign(y1 - y0)) carve(A, x, y, FS.trail); carve(A, x, y1, FS.trail); };
-  const main = U.pick(bx), other = bx.find(x => x !== main);
-  vline(12, 24, 21); let yy = hband(12, main, 21, 19, 22); vline(main, yy, sy(main) + 1);
-  vline(main, sy(main) - 1, 3); hband(main, 12, 3, 2, 4);
-  yy = hband(12, other, 20, 18, 22); vline(other, yy, sy(other) + 1); vline(other, sy(other) - 1, 6); hband(other, 12, 6, 5, 7);
-  for (let x = 0; x < W; x++) if (!bx.includes(x)) wallAt(A, x, sy(x), FS.stream);
-  bx.forEach((x, i) => A.pois.push(poi('flavor', x, sy(x), i ? 'หินก้าวข้าม' + FS.stream : 'สะพานไม้ข้าม' + FS.stream, 'water', { say: 'เสียงน้ำไหลใต้เท้า ฝั่งเหนือคือป่าลึก ฝั่งใต้คือทางกลับเมือง' })));
-  zone(A, 'ชายป่า', 0, 18, 24, 24); zone(A, 'ริม' + FS.stream, 0, 9, 24, 16); zone(A, 'ป่าลึก', 0, 0, 24, 8); zone(A, 'ลานโล่งกลางป่า', 9, 1, 15, 5);
+  if (FS.cliff) for (let i = 0; i < 3; i++) { const cx = U.ri(5, 55), cy = U.ri(22, 36); for (let x = cx - 6; x <= cx + 6; x++) wallAt(A, x, cy, 'หน้าผาหิน'); carve(A, cx + U.ri(-5, 5), cy, 'rock', 'ทางลาดชัน'); }
+  carveRect(A, 24, 2, 36, 9, 'grass');
+  // ทางเดินและสะพาน
+  const hband = (x0, x1, y0, lo, hi) => { let y = y0; for (let x = x0; x !== x1; x += Math.sign(x1 - x0)) { carve(A, x, y, FS.trail); if (Math.random() < 0.2) { const ny = U.clamp(y + U.pick([-1, 1]), lo, hi); carve(A, x, ny, FS.trail); y = ny; } } carve(A, x1, y, FS.trail); return y; };
+  const vline = (x, y0, y1) => { for (let y = y0; y !== y1; y += Math.sign(y1 - y0)) if (!inLake(x, y)) carve(A, x, y, FS.trail); carve(A, x, y1, FS.trail); };
+  const b1 = [U.ri(8, 16), U.ri(44, 52)], b2 = [U.ri(8, 16), U.ri(44, 52)];
+  b1.forEach((x, i) => carve(A, x, sy1(x), i ? 'rock' : 'wood')); b2.forEach((x, i) => carve(A, x, sy2(x), i ? 'rock' : 'wood'));
+  vline(30, 60, 55); let yy = hband(30, b1[0], 55, 52, 57); vline(b1[0], yy, sy1(b1[0]) + 1); yy = hband(30, b1[1], 55, 52, 57); vline(b1[1], yy, sy1(b1[1]) + 1);
+  for (const bx of b1) { vline(bx, sy1(bx) - 1, 30); }
+  hband(b1[0], b1[1], 30, 28, 32);
+  for (const bx of b2) { vline(bx, 30, sy2(bx) + 1); vline(bx, sy2(bx) - 1, 6); }
+  hband(b2[0], 30, 6, 4, 8); hband(b2[1], 30, 6, 4, 8);
+  for (let x = 0; x < N; x++) { if (!b1.includes(x)) wallAt(A, x, sy1(x), FS.stream); if (!b2.includes(x)) wallAt(A, x, sy2(x), FS.stream); }
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (inLake(x, y)) wallAt(A, x, y, 'ทะเลสาบกลางป่า');
+  [...b1.map(x => [x, sy1(x)]), ...b2.map(x => [x, sy2(x)])].forEach(([x, y], i) => A.pois.push(poi('flavor', x, y, (i % 2 ? 'หินก้าวข้าม' : 'สะพานไม้ข้าม') + FS.stream, 'water', { say: 'เสียงน้ำไหลใต้เท้า ฝั่งเหนือลึกเข้าไปในป่า ฝั่งใต้คือทางกลับ' })));
+  zone(A, 'ชายป่า', 0, 47, 60, 60); zone(A, 'ป่ากลาง', 0, 16, 60, 46); zone(A, 'ป่าลึก', 0, 0, 60, 15); zone(A, 'ลานโล่งกลางป่า', 24, 2, 36, 9);
+  zone(A, 'ริม' + FS.stream, -1, -1, -1, -1); zone(A, 'ริมทะเลสาบ', lake.x - lake.r - 3, lake.y - lake.r - 3, lake.x + lake.r + 3, lake.y + lake.r + 3);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!A.walls.has(MK(x, y)) && Math.min(Math.abs(y - sy1(x)), Math.abs(y - sy2(x))) <= 2) A.zcell.set(MK(x, y), 'ริม' + FS.stream);
   const dist = closeUnreachable(A, start);
   const place = zplacer(A, start, dist);
-  A.pois.push(poi('exit', start.x, start.y, 'ทางกลับเมือง', 'exit'));
-  for (let i = 0; i < 8; i++) { const p = place(2, null, ['ชายป่า', 'ริม' + FS.stream]); if (p) A.pois.push(poi('herb', p.x, p.y, 'สมุนไพร', 'herb')); }
-  for (let i = 0; i < 5; i++) { const p = place(3); if (p) A.pois.push(poi('tree', p.x, p.y, 'ต้นไม้ที่ตัดได้', 'tree')); }
-  if (Math.random() < 0.6) { const p = place(6, null, 'ป่าลึก'); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติ', 'chest')); }
-  if (Math.random() < 0.45) { const p = place(8, null, 'ป่าลึก'); if (p) A.pois.push(poi('nest', p.x, p.y, 'รังศัตรู', 'nest')); }
+  A.pois.push(poi('exit', start.x, start.y, 'ทางกลับชานเมือง', 'exit'));
+  const spot = (type, n, snd, minD, zf, o) => { const p = place(minD, null, zf); if (p) A.pois.push(poi(type, p.x, p.y, n, snd, o || {})); return p; };
+  spot('rest', 'ค่ายพรานป่า จุดพัก', 'lighthouse', 10, 'ป่ากลาง');
+  spot('shrine', 'ซากศาลเจ้าแห่งป่า', 'temple', 14, ['ป่ากลาง', 'ป่าลึก']);
+  spot('bigtree', 'ต้นไม้ยักษ์อายุพันปี', 'tree', 18, ['ป่าลึก', 'ป่ากลาง']);
+  spot('cave', 'ปากถ้ำในป่า', 'wind', 22, 'ป่าลึก');
+  const lk = place(4, null, 'ริมทะเลสาบ'); if (lk) A.pois.push(poi('flavor', lk.x, lk.y, 'ริมทะเลสาบ', 'water', { say: 'ผิวน้ำทะเลสาบนิ่งสนิท ได้ยินเสียงกบและนกน้ำ' }));
+  for (let i = 0; i < 16; i++) spot('herb', 'สมุนไพร', 'herb', 2, ['ชายป่า', 'ริม' + FS.stream, 'ริมทะเลสาบ']);
+  for (let i = 0; i < 10; i++) spot('tree', 'ต้นไม้ที่ตัดได้', 'tree', 3);
+  for (let i = 0; i < 2; i++) if (Math.random() < 0.7) spot('chest', 'หีบสมบัติ', 'chest', 12, ['ป่าลึก', 'ป่ากลาง']);
+  for (let i = 0; i < 2; i++) if (Math.random() < 0.5) spot('nest', 'รังศัตรู', 'nest', 14, 'ป่าลึก');
   questFinds(A, c, 'forest');
-  A.queue.forEach(f => { const p = place(6); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden })); });
+  A.queue.forEach(f => { const p = place(10); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden })); });
   placeEcoin(A, place, c, 'f'); bountyEnemy(A, place, CITIES[c].lv[0] + 3);
-  if (C.secretIn === 'forest' && !G.p.souls.includes(c)) { const p = place(10, 'far'); if (p) A.pois.push(poi('secret', p.x, p.y, 'เสียงแปลก ๆ', 'secret', { hidden: 1 })); }
-  if (C.bossIn === 'forest' && qst('c' + c + 'm4') && qst('c' + c + 'm4').st === 'active') { const p = place(10, null, 'ลานโล่งกลางป่า'); if (p) A.pois.push(poi('lair', p.x, p.y, 'รังของ' + ENEMIES[C.boss].n, 'lair')); }
-  const n = 8 + (c > 3 ? 2 : 0) - (hasPower('forestfriend') ? 3 : 0);
-  spawnEnemies(A, C.forest.e, n, () => areaLevel(c, U.rnd(0, 0.45)), (m) => place(Math.max(m, 6), null, ['ป่าลึก', 'ริม' + FS.stream, 'ชายป่า']));
-  if (isNight()) spawnEnemies(A, ['strix'], U.ri(1, 3), () => areaLevel(c, 0.5), place);
+  if (C.secretIn === 'forest' && !G.p.souls.includes(c)) { const p = place(20, 'far'); if (p) A.pois.push(poi('secret', p.x, p.y, 'เสียงแปลก ๆ', 'secret', { hidden: 1 })); }
+  if (C.bossIn === 'forest' && qst('c' + c + 'm4') && qst('c' + c + 'm4').st === 'active') { const p = place(20, null, 'ลานโล่งกลางป่า'); if (p) A.pois.push(poi('lair', p.x, p.y, 'รังของ' + ENEMIES[C.boss].n, 'lair')); }
+  const n = 30 + (c > 3 ? 4 : 0) - (hasPower('forestfriend') ? 8 : 0), lv = () => areaLevel(c, U.rnd(0, 0.45));
+  spawnEnemies(A, C.forest.e, n, lv, m => place(Math.max(m, 7)));
+  if (isNight()) spawnEnemies(A, ['strix'], U.ri(3, 6), () => areaLevel(c, 0.5), place);
+  setSpawn(A, C.forest.e, lv, n + 6, 20);
+  A.landmarks = A.pois.filter(p => p.type === 'flavor' && p.snd === 'water').slice(0, 2).concat(A.pois.filter(p => p.type === 'rest'));
   return { A, start };
 }
+// ถ้ำในป่า (แผนที่ย่อย ซ้อนบนป่า)
+function makeForestCave(c) {
+  const A = blankArea({ kind: 'cave', c, n: 'ถ้ำในป่า' + CITIES[c].forest.n, w: 21, h: 21, terrain: 'rock', amb: 'drip', wdef: 'ผนังถ้ำ' });
+  const start = { x: 1, y: 19, f: 0 }; genMaze(A, 1, 19);
+  for (let i = 0; i < 3; i++) { const rx = 1 + 2 * U.ri(1, 8), ry = 1 + 2 * U.ri(1, 8); carveRect(A, rx - 1, ry - 1, rx + 1, ry + 1, 'gravel', 'โถงถ้ำ'); }
+  zone(A, 'โถงถ้ำ', -1, -1, -1, -1);
+  const dist = bfs(A, start.x, start.y), place = zplacer(A, start, dist);
+  A.pois.push(poi('caveExit', start.x, start.y, 'ปากถ้ำ ทางออกสู่ป่า', 'exit'));
+  for (let i = 0; i < 2; i++) { const p = place(8, 'far'); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติในถ้ำ', 'chest')); }
+  const lv = () => areaLevel(c, U.rnd(0.3, 0.6));
+  spawnEnemies(A, CITIES[c].forest.e.concat(['bat']), 8, lv, m => place(Math.max(m, 5)));
+  setSpawn(A, CITIES[c].forest.e.concat(['bat']), lv, 10, 25);
+  return { A, start };
+}
+const SUBSTACK = [];
+function enterSub(made) { SUBSTACK.push({ area: G.area, pos: Object.assign({}, G.pos) }); G.area = made.A; G.pos = Object.assign({}, made.start); AudioSys.sample('door_open', { vol: 0.4 }); Game.push(AreaScene(made.A)); }
+function leaveSub() { const s = SUBSTACK.pop(); if (!s) return goSuburb(G.p.city, 'gateForest'); G.area = s.area; G.pos = s.pos; Game.pop(); }
 
-// ===================== เหมือง 19 x 19 ต่อชั้น =====================
+// ===================== เหมือง 47 x 47 ต่อชั้น (3 ชั้น) =====================
 function makeMine(c, floor) {
-  const C = CITIES[c], W = 19, H = 19;
-  const A = blankArea({ kind: 'mine', c, floor, n: C.mine.n + ' ชั้น ' + floor, w: W, h: H, cx: 9, cy: 9, terrain: C.terrain[2], amb: C.amb[2], wdef: 'ผนังหิน' });
+  const C = CITIES[c], W = 47, H = 47;
+  const theme = floor === 1 ? 'work' : floor === 2 ? 'river' : 'deep';
+  const A = blankArea({ kind: 'mine', c, floor, n: C.mine.n + ' ชั้น ' + floor + (theme === 'work' ? ' อุโมงค์คนงาน' : theme === 'river' ? ' ถ้ำแม่น้ำใต้ดิน' : ' อุโมงค์ถล่มและห้องโถงลึก'), w: W, h: H, cx: 23, cy: 23, terrain: C.terrain[2], amb: C.amb[2], wdef: 'ผนังหิน' });
   fillAll(A);
-  const start = { x: 1, y: 17, f: 0 };
-  carveRect(A, 1, 15, 3, 17, 'wood', 'ปากเหมือง'); zone(A, 'ปากเหมือง', 0, 14, 4, 18);
-  // อุโมงค์หลักมีรางรถเหมือง
-  const rail = []; let x = 3, y = 16, horiz = true, guard = 0;
-  while ((x < 16 || y > 2) && guard++ < 30) {
-    const len = U.ri(3, 6);
-    for (let i = 0; i < len; i++) { if (horiz && x < 17) x++; else if (!horiz && y > 1) y--; carve(A, x, y, 'wood', 'อุโมงค์หลัก'); rail.push([x, y]); }
-    horiz = !horiz; if (x >= 16) horiz = false; if (y <= 2) horiz = true;
+  const start = { x: 2, y: 44, f: 0 };
+  carveRect(A, 1, 41, 5, 45, 'wood', 'ปากเหมือง'); zone(A, 'ปากเหมือง', 0, 40, 6, 46);
+  const rail = []; let x = 5, y = 43, horiz = true, guard = 0;
+  while ((x < 43 || y > 3) && guard++ < 60) {
+    const len = U.ri(4, 9);
+    for (let i = 0; i < len; i++) { if (horiz && x < 44) x++; else if (!horiz && y > 2) y--; carve(A, x, y, 'wood', 'อุโมงค์หลัก'); rail.push([x, y]); }
+    horiz = !horiz; if (x >= 43) horiz = false; if (y <= 3) horiz = true;
   }
   zone(A, 'อุโมงค์หลัก', -1, -1, -1, -1);
-  // อุโมงค์แยก และห้องโถงขุดแร่
-  const nb = 7 + floor * 2;
+  const nb = 16 + floor * 4;
   for (let i = 0; i < nb; i++) {
-    let [bx, by] = U.pick(rail.slice(3)); const [dx, dy] = U.pick([[1, 0], [-1, 0], [0, 1], [0, -1]]); const len = U.ri(4, 8);
-    for (let s = 0; s < len; s++) { const nx = bx + dx, ny = by + dy; if (nx < 1 || ny < 1 || nx > W - 2 || ny > H - 2) break; bx = nx; by = ny; if (A.walls.has(MK(bx, by))) carve(A, bx, by, 'rock', 'อุโมงค์แยก'); }
-    if (Math.random() < 0.4) for (let hy = by - 1; hy <= by + 1; hy++) for (let hx = bx - 1; hx <= bx + 1; hx++) if (hx >= 1 && hy >= 1 && hx <= W - 2 && hy <= H - 2 && A.walls.has(MK(hx, hy))) carve(A, hx, hy, 'gravel', 'ห้องโถงขุดแร่');
+    let [bx, by] = U.pick(rail.slice(4)); const [dx, dy] = U.pick([[1, 0], [-1, 0], [0, 1], [0, -1]]); const len = U.ri(5, 12);
+    for (let s = 0; s < len; s++) { const nx = bx + dx, ny = by + dy; if (nx < 1 || ny < 1 || nx > W - 2 || ny > H - 2) break; bx = nx; by = ny; if (A.walls.has(MK(bx, by))) carve(A, bx, by, theme === 'river' ? 'gravel' : 'rock', theme === 'river' ? 'ถ้ำธรรมชาติ' : 'อุโมงค์แยก'); if (Math.random() < 0.15) { const t = U.pick([[1, 0], [-1, 0], [0, 1], [0, -1]]); if (t[0] !== -dx || t[1] !== -dy) { } } }
+    if (Math.random() < 0.45) { const r = theme === 'river' ? 2 : 1; for (let hy = by - r; hy <= by + r; hy++) for (let hx = bx - r; hx <= bx + r; hx++) if (hx >= 1 && hy >= 1 && hx <= W - 2 && hy <= H - 2 && A.walls.has(MK(hx, hy))) carve(A, hx, hy, 'gravel', 'ห้องโถงขุดแร่'); }
   }
-  zone(A, 'อุโมงค์แยก', -1, -1, -1, -1); zone(A, 'ห้องโถงขุดแร่', -1, -1, -1, -1);
-  const dist = bfs(A, start.x, start.y), place = zplacer(A, start, dist);
-  A.pois.push(poi('exit', start.x, start.y, floor > 1 ? 'บันไดกลับขึ้นเมือง' : 'รอกปากเหมือง ทางกลับขึ้นเมือง', 'exit'));
-  const far = rail[rail.length - 1] || [...dist.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
+  zone(A, 'อุโมงค์แยก', -1, -1, -1, -1); zone(A, 'ห้องโถงขุดแร่', -1, -1, -1, -1); zone(A, 'ถ้ำธรรมชาติ', -1, -1, -1, -1);
+  if (theme === 'river') {
+    const ry = U.ri(18, 28); for (let rx = 1; rx < W - 1; rx++) { const k = MK(rx, ry); if (!A.walls.has(k)) { A.water.add(k); A.zcell.set(k, 'แม่น้ำใต้ดิน'); } }
+    zone(A, 'แม่น้ำใต้ดิน', -1, -1, -1, -1);
+    const crossings = rail.filter(([rx, yy]) => yy === ry); crossings.forEach(([rx]) => { A.water.delete(MK(rx, ry)); carve(A, rx, ry, 'wood', 'สะพานข้ามแม่น้ำใต้ดิน'); A.pois.push(poi('flavor', rx, ry, 'สะพานข้ามแม่น้ำใต้ดิน', 'water', { say: 'น้ำเย็นเฉียบไหลแรงอยู่ใต้สะพานไม้ อย่าลงไปลุยน้ำ' })); });
+    zone(A, 'สะพานข้ามแม่น้ำใต้ดิน', -1, -1, -1, -1);
+  }
+  if (theme === 'deep') {
+    const [fx, fy] = rail[rail.length - 1]; carveRect(A, U.clamp(fx - 4, 1, W - 2), U.clamp(fy - 1, 1, H - 2), U.clamp(fx + 1, 1, W - 2), U.clamp(fy + 5, 1, H - 2), 'gravel', 'ห้องโถงลึกสุด'); zone(A, 'ห้องโถงลึกสุด', -1, -1, -1, -1);
+    const dist0 = bfs(A, start.x, start.y);
+    let n = 0; for (const [rx, ry] of U.shuffle(rail.slice(8, -4))) { if (n >= 10) break; wallAt(A, rx, ry, 'หินถล่มขวางอุโมงค์'); const d2 = bfs(A, start.x, start.y); if (d2.has(MK(fx, fy))) n++; else carve(A, rx, ry, 'wood', 'อุโมงค์หลัก'); }
+  }
+  const dist = bfs(A, start.x, start.y), place = zplacer(A, start, new Map([...dist].filter(([k]) => !A.water.has(k))));
+  A.pois.push(poi('exit', start.x, start.y, floor > 1 ? 'บันไดกลับขึ้นชานเมือง' : 'รอกปากเหมือง ทางกลับชานเมือง', 'exit'));
+  const far = rail[rail.length - 1];
   if (floor < 3) A.pois.push(poi('stairs', far[0], far[1], 'ปล่องบันไดลงชั้น ' + (floor + 1), 'stairs'));
   else if (C.bossIn === 'mine' && qst('c' + c + 'm4') && qst('c' + c + 'm4').st === 'active') A.pois.push(poi('lair', far[0], far[1], 'ห้องโถงของ' + ENEMIES[C.boss].n, 'lair'));
-  if (floor > 1) A.pois.push(poi('stairsUp', start.x, start.y, 'บันไดกลับขึ้นเมือง', null));
-  const hall = [...A.zcell.entries()].filter(([, z]) => z === 'ห้องโถงขุดแร่'); if (hall.length) { const [hx, hy] = U.pick(hall)[0].split(',').map(Number); if (!A.pois.some(p => p.x === hx && p.y === hy)) A.pois.push(poi('flavor', hx, hy, 'ปล่องน้ำหยด', 'water', { say: 'น้ำหยดจากเพดานลงแอ่งหิน เสียงก้องไปทั้งห้องโถง' })); }
-  // เส้นแร่ อยู่ตามผนังอุโมงค์แยกและห้องโถงมากกว่า
+  if (floor > 1) A.pois.push(poi('stairsUp', start.x, start.y, 'บันไดกลับขึ้น', null));
+  if (theme === 'work') { const p = place(6, null, 'อุโมงค์หลัก'); if (p) A.pois.push(poi('miner', p.x, p.y, 'คนงานเหมืองชื่อบรูตุส', 'npc')); const r = place(12, null, ['ห้องโถงขุดแร่', 'อุโมงค์หลัก']); if (r) A.pois.push(poi('rest', r.x, r.y, 'กระท่อมพักคนงาน จุดพัก', 'lighthouse')); }
+  const hall = [...A.zcell.entries()].filter(([k, z]) => z === 'ห้องโถงขุดแร่' && dist.has(k)); if (hall.length) { const [hx, hy] = U.pick(hall)[0].split(',').map(Number); if (!A.pois.some(p => p.x === hx && p.y === hy)) A.pois.push(poi('flavor', hx, hy, 'ปล่องน้ำหยด', 'water', { say: 'น้ำหยดจากเพดานลงแอ่งหิน เสียงก้องไปทั้งห้องโถง' })); }
   const cand = [];
-  for (const k of A.walls) { const [wx, wy] = k.split(',').map(Number); if (wx <= 0 || wy <= 0 || wx >= W - 1 || wy >= H - 1) continue; const adj = [[0, 1], [1, 0], [0, -1], [-1, 0]].map(([dx, dy]) => [wx + dx, wy + dy]).filter(([ax, ay]) => walkable(A, ax, ay)); if (!adj.length) continue; const side = adj.some(([ax, ay]) => A.zcell.get(MK(ax, ay)) !== 'อุโมงค์หลัก'); cand.push([k, side ? 3 : 1]); }
+  for (const k of A.walls) { const [wx, wy] = k.split(',').map(Number); if (wx <= 0 || wy <= 0 || wx >= W - 1 || wy >= H - 1) continue; const adj = [[0, 1], [1, 0], [0, -1], [-1, 0]].map(([dx, dy]) => [wx + dx, wy + dy]).filter(([ax, ay]) => walkable(A, ax, ay)); if (!adj.length) continue; const zz = adj.map(([ax, ay]) => A.zcell.get(MK(ax, ay))); const w = zz.includes('ห้องโถงลึกสุด') ? 6 : zz.some(z => z && z !== 'อุโมงค์หลัก') ? 3 : 1; cand.push([k, w]); }
   const pool = []; cand.forEach(([k, w]) => { for (let i = 0; i < w; i++) pool.push(k); });
-  const chosen = new Set(); while (chosen.size < Math.min(14 + floor * 2, cand.length)) chosen.add(U.pick(pool));
-  chosen.forEach(k => { const r = Math.random(), rare = 0.08 + S().s.LUK * 0.003 + (hasPower('goldhand') ? 0.1 : 0) + floor * 0.02; A.veins.set(k, { tier: r < rare ? 2 : r < rare + 0.3 ? 1 : 0, left: 2 }); });
-  if (Math.random() < 0.5) { const p = place(6, null, ['อุโมงค์แยก', 'ห้องโถงขุดแร่']); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติ', 'chest')); }
+  const chosen = new Set(); while (chosen.size < Math.min(40 + floor * 8, cand.length)) chosen.add(U.pick(pool));
+  chosen.forEach(k => { const r = Math.random(), rare = 0.08 + S().s.LUK * 0.003 + (hasPower('goldhand') ? 0.1 : 0) + floor * 0.03; A.veins.set(k, { tier: r < rare ? 2 : r < rare + 0.3 ? 1 : 0, left: 2 }); });
+  for (let i = 0; i < 2; i++) if (Math.random() < 0.6) { const p = place(10, null, ['อุโมงค์แยก', 'ห้องโถงขุดแร่', 'ถ้ำธรรมชาติ']); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติ', 'chest')); }
   questFinds(A, c, 'mine');
-  A.queue.forEach(f => { const p = place(5); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden })); });
+  A.queue.forEach(f => { const p = place(8); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden })); });
   if (floor === 2) placeEcoin(A, place, c, 'm'); if (floor === 1) bountyEnemy(A, place, CITIES[c].lv[0] + 5);
-  if (C.secretIn === 'mine' && floor >= 2 && !G.p.souls.includes(c)) { const p = place(8, 'far'); if (p) A.pois.push(poi('secret', p.x, p.y, 'เสียงแปลก ๆ', 'secret', { hidden: 1 })); }
-  spawnEnemies(A, C.mine.e, 4 + floor * 2, () => areaLevel(c, 0.15 + 0.22 * floor + U.rnd(0, 0.1)), m => place(Math.max(m, 5)));
+  if (C.secretIn === 'mine' && floor >= 2 && !G.p.souls.includes(c)) { const p = place(14, 'far'); if (p) A.pois.push(poi('secret', p.x, p.y, 'เสียงแปลก ๆ', 'secret', { hidden: 1 })); }
+  const lv = () => areaLevel(c, 0.15 + 0.22 * floor + U.rnd(0, 0.1)), n = 14 + floor * 4;
+  spawnEnemies(A, C.mine.e, n, lv, m => place(Math.max(m, 6)));
+  setSpawn(A, C.mine.e, lv, n + 4, 22);
+  A.landmarks = A.pois.filter(p => p.type === 'exit');
   return { A, start };
 }
 
-// ===================== พื้นที่ที่ 3 =====================
+// ===================== พื้นที่ที่ 3 (51 x 51) =====================
 function makeArea3(c) {
   const D = AREA3[c], sub = D.sub;
-  const A = blankArea({ kind: 'a3', sub, c, n: D.n, w: 21, h: 21, terrain: D.terrain, amb: D.amb });
-  let start = { x: 10, y: 20, f: 0 };
+  const A = blankArea({ kind: 'a3', sub, c, n: D.n, w: 51, h: 51, terrain: D.terrain, amb: D.amb });
+  let start = { x: 25, y: 50, f: 0 };
+  const fl = (x, y, n, snd, say) => A.pois.push(poi('flavor', x, y, n, snd, { say }));
   if (sub === 'vine') {
     A.terrain = 'grass'; A.wdef = 'แถวเถาองุ่น'; A.edge = 'รั้วหินรอบไร่';
-    for (let y = 2; y <= 18; y += 2) for (let x = 1; x <= 19; x++) if (x !== 10) wallAt(A, x, y, 'แถวเถาองุ่น');
-    for (let y = 1; y <= 19; y += 2) carveRect(A, 1, y, 19, y, 'dirt');
-    carveRect(A, 10, 0, 10, 20, 'dirt'); carveRect(A, 9, 9, 11, 11, 'wood');
-    zone(A, 'ไร่ด้านใต้', 0, 11, 20, 20); zone(A, 'ไร่ด้านเหนือ', 0, 0, 20, 9); zone(A, 'ทางเดินกลางไร่', 10, 0, 10, 20); zone(A, 'ลานโรงบีบองุ่น', 9, 9, 11, 11);
-    A.pois.push(poi('flavor', 10, 10, 'โรงบีบองุ่นเก่า', 'press', { say: 'โรงบีบองุ่นเก่าลั่นเอี๊ยด ไม่มีใครใช้มานานแล้ว' }), poi('flavor', 19, 19, 'บ้านไร่ร้าง', null, { say: 'ประตูบ้านไร่แง้มอยู่ ข้างในมีแต่ฝุ่นและไหเหล้าแตก' }));
+    for (const [x0, y0, x1, y1] of [[2, 2, 22, 20], [28, 2, 48, 20], [2, 28, 22, 46], [28, 28, 48, 46]]) { for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x++) if (x !== Math.round((x0 + x1) / 2)) wallAt(A, x, y, 'แถวเถาองุ่น'); }
+    carveRect(A, 25, 0, 25, 50, 'dirt'); carveRect(A, 0, 24, 50, 24, 'dirt');
+    wallRect(A, 22, 21, 28, 27, 'ผนังโรงไวน์'); carveRect(A, 23, 22, 27, 26, 'wood', 'โรงไวน์'); carve(A, 25, 27, 'wood'); carve(A, 25, 21, 'wood');
+    wallRect(A, 40, 47, 49, 50, 'บ้านคนงาน'); carveRect(A, 41, 48, 48, 49, 'dirt', 'หมู่บ้านคนงานไร่'); carve(A, 44, 47, 'dirt');
+    zone(A, 'แปลงองุ่นตะวันตกเฉียงเหนือ', 0, 0, 24, 23); zone(A, 'แปลงองุ่นตะวันออกเฉียงเหนือ', 26, 0, 50, 23); zone(A, 'แปลงองุ่นตะวันตกเฉียงใต้', 0, 25, 24, 50); zone(A, 'แปลงองุ่นตะวันออกเฉียงใต้', 26, 25, 50, 50);
+    zone(A, 'ทางเดินกลางไร่', 25, 0, 25, 50); zone(A, 'โรงไวน์', -1, -1, -1, -1); zone(A, 'หมู่บ้านคนงานไร่', -1, -1, -1, -1);
+    fl(25, 24, 'โรงบีบองุ่นเก่า', 'press', 'โรงบีบองุ่นเก่าลั่นเอี๊ยด ไม่มีใครใช้มานานแล้ว'); fl(24, 23, 'ทางลงห้องใต้ดินเก็บไหไวน์', 'wind', 'ห้องใต้ดินเย็นชื้น ไหไวน์ดินเผาเรียงเป็นแถวยาว กลิ่นไวน์บูดลอยออกมา');
+    fl(44, 48, 'หมู่บ้านคนงานไร่', null, 'บ้านคนงานว่างเปล่า มีแค่หม้อข้าวเก่ากับรองเท้าสานทิ้งไว้');
   }
   if (sub === 'aqueduct') {
-    A.w = 7; A.h = 31; start = { x: 3, y: 30, f: 0 }; A.wdef = 'ขอบสะพาน ข้างล่างเป็นหุบเหวลึก'; A.edge = A.wdef; fillAll(A, A.wdef);
-    carveRect(A, 3, 0, 3, 30, 'concrete', 'ร่องน้ำบนสะพาน');
-    [6, 13, 20, 27].forEach((y, i) => { const x0 = i % 2 ? 0 : 4; carveRect(A, x0, y - 1, x0 + 2, y + 1, 'rock', 'ห้องพักคนเฝ้า'); A.pois.push(poi('flavor', x0 + 1, y, 'ห้องพักคนเฝ้าสะพาน', null, { say: 'ห้องหินเล็ก ๆ กันลมได้ มีม้านั่งหินกับตะเกียงเก่า' })); });
-    zone(A, 'ร่องน้ำบนสะพาน', -1, -1, -1, -1); zone(A, 'ห้องพักคนเฝ้า', -1, -1, -1, -1);
+    A.w = 11; A.h = 91; start = { x: 5, y: 90, f: 0 }; A.wdef = 'ขอบสะพาน ข้างล่างเป็นหุบเหวลึก'; A.edge = A.wdef; fillAll(A, A.wdef);
+    carveRect(A, 5, 0, 5, 90, 'concrete', 'ร่องน้ำบนสะพาน'); carveRect(A, 1, 6, 1, 84, 'dirt', 'ทางเดินใต้สะพาน');
+    [8, 20, 32, 44, 56, 68, 80].forEach((y, i) => { carveRect(A, 6, y - 1, 9, y + 1, 'rock', 'หอคอยพัก'); carveRect(A, 1, y, 4, y, 'rock', 'บันไดลงใต้สะพาน'); fl(8, y, 'หอคอยพักบนสะพาน', null, 'ห้องหินกันลมได้ มีม้านั่งหินกับตะเกียงเก่า บันไดฝั่งตะวันตกลงไปใต้สะพาน'); });
+    zone(A, 'ร่องน้ำบนสะพาน', -1, -1, -1, -1); zone(A, 'หอคอยพัก', -1, -1, -1, -1); zone(A, 'ทางเดินใต้สะพาน', -1, -1, -1, -1); zone(A, 'บันไดลงใต้สะพาน', -1, -1, -1, -1);
   }
   if (sub === 'wreck') {
-    A.h = 15; start = { x: 10, y: 14, f: 0 }; A.wdef = 'ผนังเรือ'; A.edge = 'ทะเลลึก'; fillAll(A, 'ทะเลลึก');
-    for (let y = 8; y <= 14; y++) { const inset = Math.max(0, 11 - y); carveRect(A, 2 + inset, y, 18 - inset, y, 'wood', 'ดาดฟ้าเรือ'); }
-    carveRect(A, 3, 1, 17, 6, 'wood', 'ห้องเก็บของใต้ท้องเรือ');
-    for (const bx of [8, 12]) for (let y = 1; y <= 6; y++) if (y !== 3 && y !== 4) wallAt(A, bx, y, 'ผนังกั้นห้องในเรือ');
-    for (const lx of [5, 15]) { carve(A, lx, 7, 'wood', 'บันไดลงท้องเรือ'); A.pois.push(poi('flavor', lx, 7, 'บันไดลงท้องเรือ', null, { say: 'บันไดไม้ผุ ทางเหนือลงไปยังห้องเก็บของใต้ท้องเรือ' })); }
-    zone(A, 'ดาดฟ้าเรือ', -1, -1, -1, -1); zone(A, 'ห้องเก็บของใต้ท้องเรือ', -1, -1, -1, -1); zone(A, 'บันไดลงท้องเรือ', -1, -1, -1, -1, {});
-    for (let y = 0; y < A.h; y++) for (let x = 0; x < A.w; x++) { const k = MK(x, y); if (A.walls.has(k) || cheb(x - start.x, y - start.y) <= 1 || y === 7 || A.pois.some(p => p.x === x && p.y === y)) continue; if (Math.random() < (y < 7 ? 0.14 : 0.05)) A.water.add(k); }
+    A.h = 45; start = { x: 25, y: 44, f: 0 }; A.wdef = 'ผนังเรือ'; A.edge = 'ทะเลลึก'; fillAll(A, 'ทะเลลึก');
+    for (let y = 30; y <= 44; y++) { const inset = Math.max(0, 36 - y); carveRect(A, 4 + inset, y, 46 - inset, y, 'wood', 'ดาดฟ้าเรือ'); }
+    carveRect(A, 6, 16, 44, 28, 'wood', 'ห้องลูกเรือ'); for (const bx of [14, 22, 30, 38]) for (let y = 16; y <= 28; y++) if (y !== 21 && y !== 22) wallAt(A, bx, y, 'ผนังห้องลูกเรือ');
+    carveRect(A, 8, 2, 42, 14, 'wood', 'ห้องเก็บของจมน้ำ'); for (const by of [8]) for (let x = 8; x <= 42; x++) if (x % 9 !== 0) wallAt(A, x, by, 'ลังสินค้าซ้อนสูง');
+    for (const lx of [10, 40]) { carve(A, lx, 29, 'wood', 'บันไดในเรือ'); fl(lx, 29, 'บันไดลงห้องลูกเรือ', null, 'บันไดไม้ผุ ทางเหนือลงไปห้องลูกเรือ'); }
+    for (const lx of [18, 34]) { carve(A, lx, 15, 'wood', 'บันไดในเรือ'); fl(lx, 15, 'บันไดลงห้องเก็บของ', null, 'บันไดลงไปห้องเก็บของที่น้ำท่วมครึ่งหนึ่ง'); }
+    zone(A, 'ดาดฟ้าเรือ', -1, -1, -1, -1); zone(A, 'ห้องลูกเรือ', -1, -1, -1, -1); zone(A, 'ห้องเก็บของจมน้ำ', -1, -1, -1, -1); zone(A, 'บันไดในเรือ', -1, -1, -1, -1);
+    for (let y = 0; y < A.h; y++) for (let x = 0; x < A.w; x++) { const k = MK(x, y); if (A.walls.has(k) || cheb(x - start.x, y - start.y) <= 1 || y === 29 || y === 15 || A.pois.some(p => p.x === x && p.y === y)) continue; if (Math.random() < (y < 15 ? 0.2 : y < 29 ? 0.06 : 0.04)) A.water.add(k); }
   }
   if (sub === 'necro') {
-    start = { x: 1, y: 19, f: 0 }; A.wdef = 'ผนังสุสานหินทราย'; genMaze(A, 1, 19);
-    for (const k of [...Array(21 * 21).keys()]) { const x = k % 21, y = Math.floor(k / 21); if (!A.walls.has(MK(x, y))) { A.surf.set(MK(x, y), 'dirt'); A.zcell.set(MK(x, y), 'ทางเดินสุสาน'); } }
-    for (let i = 0; i < 4; i++) { const rx = 1 + 2 * U.ri(1, 7), ry = 1 + 2 * U.ri(1, 7); carveRect(A, rx - 1, ry - 1, rx + 1, ry + 1, 'tile', 'ห้องฝังศพ'); }
+    start = { x: 1, y: 49, f: 0 }; A.wdef = 'ผนังสุสานหินทราย'; genMaze(A, 1, 49);
+    for (let k = 0; k < 51 * 51; k++) { const x = k % 51, y = Math.floor(k / 51); if (!A.walls.has(MK(x, y))) { A.surf.set(MK(x, y), 'dirt'); A.zcell.set(MK(x, y), 'ทางเดินสุสาน'); } }
+    for (let i = 0; i < 12; i++) { const rx = 1 + 2 * U.ri(1, 23), ry = 1 + 2 * U.ri(1, 23); carveRect(A, rx - 1, ry - 1, rx + 1, ry + 1, 'tile', 'ห้องฝังศพ'); }
     zone(A, 'ทางเดินสุสาน', -1, -1, -1, -1); zone(A, 'ห้องฝังศพ', -1, -1, -1, -1);
   }
   if (sub === 'templum') {
     A.terrain = 'marble'; A.wdef = 'เสาหินน้ำแข็ง'; A.edge = 'ผนังวิหาร';
-    for (const x of [6, 14]) for (let y = 3; y <= 18; y += 2) wallAt(A, x, y, 'เสาหินน้ำแข็ง');
-    for (const x of [3, 17]) for (let y = 4; y <= 16; y += 4) wallAt(A, x, y, 'ผนังห้องสวดด้านข้าง');
-    zone(A, 'ทางเดินข้าง', 0, 0, 20, 20); zone(A, 'โถงกลางวิหาร', 7, 0, 13, 20); zone(A, 'แท่นบูชา', 4, 0, 16, 2); zone(A, 'ทางเข้าวิหาร', 7, 19, 13, 20);
+    for (const x of [16, 34]) for (let y = 6; y <= 46; y += 2) wallAt(A, x, y, 'เสาหินน้ำแข็ง');
+    for (const x of [6, 44]) for (let y = 8; y <= 44; y += 6) wallRect(A, x - 2, y, x + 2, y, 'ผนังห้องสวดด้านข้าง');
+    wallRect(A, 10, 2, 40, 2, 'ฉากกั้นแท่นบูชา'); carve(A, 25, 2, 'marble');
+    zone(A, 'ทางเดินข้าง', 0, 0, 50, 50); zone(A, 'โถงกลางวิหาร', 17, 0, 33, 50); zone(A, 'แท่นบูชา', 10, 0, 40, 1); zone(A, 'ทางเข้าวิหาร', 17, 47, 33, 50);
   }
   if (sub === 'forum') {
     A.terrain = 'marble'; A.wdef = 'ซากเสาหิน'; A.edge = 'ซากกำแพงเมืองหลวง';
-    wallRect(A, 1, 1, 7, 5, 'ซากผนังบาซิลิกา'); carveRect(A, 2, 2, 6, 4, 'tile'); carve(A, 4, 5, 'tile');
-    wallRect(A, 13, 1, 19, 5, 'ซากผนังวิหาร'); carveRect(A, 14, 2, 18, 4, 'debris'); carve(A, 16, 5, 'debris');
-    for (let y = 7; y <= 15; y += 2) for (const x of [6, 14]) wallAt(A, x, y, 'ซากเสาหิน');
-    for (let y = 0; y < 21; y++) for (let x = 0; x < 21; x++) if (cheb(x - 10, y - 20) > 2 && !A.walls.has(MK(x, y)) && Math.random() < 0.07) wallAt(A, x, y, Math.random() < 0.4 ? 'รูปปั้นหินแตก' : 'กองซากหิน');
-    zone(A, 'ลานจัตุรัส', 0, 6, 20, 20); zone(A, 'ซากบาซิลิกา', 1, 1, 7, 5); zone(A, 'ซากวิหาร', 13, 1, 19, 5);
+    wallRect(A, 2, 2, 18, 12, 'ซากผนังบาซิลิกา'); carveRect(A, 3, 3, 17, 11, 'tile'); carve(A, 10, 12, 'tile');
+    wallRect(A, 32, 2, 48, 12, 'ซากผนังวิหาร'); carveRect(A, 33, 3, 47, 11, 'debris'); carve(A, 40, 12, 'debris');
+    wallRect(A, 2, 38, 14, 48, 'ซากผนังวังจักรพรรดิ'); carveRect(A, 3, 39, 13, 47, 'marble'); carve(A, 14, 43, 'marble');
+    for (let y = 16; y <= 36; y += 2) for (const x of [14, 36]) wallAt(A, x, y, 'ซากเสาหิน');
+    for (let y = 0; y < 51; y++) for (let x = 0; x < 51; x++) if (cheb(x - 25, y - 50) > 2 && !A.walls.has(MK(x, y)) && Math.random() < 0.06) wallAt(A, x, y, Math.random() < 0.4 ? 'รูปปั้นหินแตก' : 'กองซากหิน');
+    zone(A, 'ลานจัตุรัส', 0, 13, 50, 50); zone(A, 'ซากบาซิลิกา', 2, 2, 18, 12); zone(A, 'ซากวิหาร', 32, 2, 48, 12); zone(A, 'ซากวังจักรพรรดิ', 2, 38, 14, 48);
+  }
+  if (sub === 'arena') {
+    A.terrain = 'concrete'; A.wdef = 'ผนังหินของสนาม'; A.edge = 'กำแพงด้านนอกสนาม'; fillAll(A, 'ผนังหินของสนาม');
+    carveRect(A, 25, 30, 25, 50, 'concrete', 'ทางเข้าสนาม'); carveRect(A, 6, 30, 44, 30, 'concrete', 'ทางเดินใต้อัฒจันทร์');
+    carveRect(A, 6, 4, 6, 30, 'concrete', 'ทางเดินใต้อัฒจันทร์'); carveRect(A, 44, 4, 44, 30, 'concrete', 'ทางเดินใต้อัฒจันทร์'); carveRect(A, 6, 4, 44, 4, 'concrete', 'ทางเดินใต้อัฒจันทร์');
+    carveRect(A, 14, 10, 36, 24, 'dirt', 'ลานทรายกลางสนาม'); carveRect(A, 25, 25, 25, 29, 'concrete'); carveRect(A, 25, 5, 25, 9, 'concrete');
+    carveRect(A, 8, 34, 18, 40, 'wood', 'ห้องพักนักสู้'); carve(A, 13, 31, 'wood'); carveRect(A, 13, 31, 13, 33, 'wood');
+    carveRect(A, 32, 34, 42, 40, 'dirt', 'คอกสัตว์'); carveRect(A, 37, 31, 37, 33, 'dirt');
+    carveRect(A, 1, 4, 4, 30, 'concrete', 'อัฒจันทร์'); carveRect(A, 46, 4, 49, 30, 'concrete', 'อัฒจันทร์'); carve(A, 5, 17, 'concrete'); carve(A, 45, 17, 'concrete');
+    for (const z of ['ทางเข้าสนาม', 'ทางเดินใต้อัฒจันทร์', 'ลานทรายกลางสนาม', 'ห้องพักนักสู้', 'คอกสัตว์', 'อัฒจันทร์']) zone(A, z, -1, -1, -1, -1, z === 'อัฒจันทร์' || z === 'ลานทรายกลางสนาม' ? { amb: 'arena' } : {});
+    A.pois.push(poi('arenaSand', 25, 17, 'ลานทรายกลางสนาม ลงแข่ง', 'circus'), poi('lanista', 13, 37, 'ลานิสตา ครูฝึกกลาดิเอเตอร์', 'npc'));
+    fl(37, 37, 'คอกสัตว์', 'lair', 'สิงโตและหมีในกรงเหล็กคำรามใส่คุณ'); fl(2, 17, 'อัฒจันทร์ฝั่งตะวันตก', 'circus', 'ฝูงชนนั่งเต็มอัฒจันทร์ ตะโกนเชียร์เสียงดังสนั่น'); fl(48, 17, 'อัฒจันทร์ฝั่งตะวันออก', 'circus', 'คนขายขนมปังเดินตะโกนขายไปตามขั้นอัฒจันทร์');
   }
   const dist = sub === 'necro' ? bfs(A, start.x, start.y) : closeUnreachable(A, start);
   for (const k of A.water) if (!dist.has(k)) A.water.delete(k);
+  A.pois.forEach(p => fixPoi(A, p));
   const place = zplacer(A, start, new Map([...dist].filter(([k]) => !A.water.has(k))));
-  A.pois.push(poi('exit', start.x, start.y, 'ทางกลับ' + CITIES[c].n, 'exit'));
-  if (sub === 'vine') { for (let i = 0; i < 10; i++) { const p = place(2, null, (x, y) => y % 2 === 1); if (p) A.pois.push(poi('grape', p.x, p.y, 'เถาองุ่น', 'herb')); } }
-  if (sub === 'wreck' && qst('c4s5') && qst('c4s5').st === 'active' && !qst('c4s5').prog[0]) { const p = place(8, 'far'); if (p) A.pois.push(poi('lighthouse', p.x, p.y, 'ประภาคารบนซากเรือ', 'lighthouse', { q: 'c4s5' })); }
-  if (sub === 'templum' && qst('c6mx') && qst('c6mx').st === 'active' && !qst('c6mx').prog[0]) { const p = place(8, null, 'แท่นบูชา'); if (p) A.pois.push(poi('bells', p.x, p.y, 'ระฆังน้ำแข็งชุดสุดท้าย', 'bells', { q: 'c6mx' })); }
+  A.pois.push(poi('exit', start.x, start.y, 'ทางกลับชานเมือง' + CITIES[c].n, 'exit'));
+  A.landmarks = A.pois.filter(p => p.type === 'arenaSand').concat(A.pois.filter(p => p.type === 'flavor').slice(0, 1));
+  if (sub === 'arena') return { A, start };
+  if (sub === 'vine') for (let i = 0; i < 24; i++) { const p = place(2, null, (x, y, z) => y % 2 === 1 && z && z.n.startsWith('แปลง')); if (p) A.pois.push(poi('grape', p.x, p.y, 'เถาองุ่น', 'herb')); }
+  if (sub === 'wreck' && qst('c4s5') && qst('c4s5').st === 'active' && !qst('c4s5').prog[0]) { const p = place(16, 'far'); if (p) A.pois.push(poi('lighthouse', p.x, p.y, 'ประภาคารบนซากเรือ', 'lighthouse', { q: 'c4s5' })); }
+  if (sub === 'templum' && qst('c6mx') && qst('c6mx').st === 'active' && !qst('c6mx').prog[0]) { const p = place(16, null, 'แท่นบูชา'); if (p) A.pois.push(poi('bells', p.x, p.y, 'ระฆังน้ำแข็งชุดสุดท้าย', 'bells', { q: 'c6mx' })); }
   questFinds(A, c, 'a3');
-  A.queue.forEach(f => { const p = place(6); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden, quiet: f.quiet })); });
-  if (!G.p.flags['ab' + c]) { const p = place(10, 'far'); if (p) A.pois.push(poi('lair3', p.x, p.y, 'ที่อยู่ของ' + ENEMIES[D.boss].n, 'lair')); }
-  if (c !== 3) placeEcoin(A, place, c, 'a');
-  if (Math.random() < 0.6) { const p = place(5); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติ', 'chest')); }
-  const lv = () => U.ri(D.lv[0], D.lv[1]);
-  spawnEnemies(A, D.e, sub === 'aqueduct' ? 6 : 9, lv, m => place(Math.max(m, 5)));
+  A.queue.forEach(f => { const p = place(10); if (p) A.pois.push(poi('find', p.x, p.y, f.n, f.snd, { q: f.q, qi: f.qi, hidden: f.hidden, quiet: f.quiet })); });
+  if (!G.p.flags['ab' + c]) { const p = place(20, 'far'); if (p) A.pois.push(poi('lair3', p.x, p.y, 'ที่อยู่ของ' + ENEMIES[D.boss].n, 'lair')); }
+  placeEcoin(A, place, c, 'a');
+  for (let i = 0; i < 3; i++) if (Math.random() < 0.6) { const p = place(8); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติ', 'chest')); }
+  const lv = () => U.ri(D.lv[0], D.lv[1]), n = sub === 'aqueduct' ? 18 : 28;
+  spawnEnemies(A, D.e, n, lv, m => place(Math.max(m, 6)));
   bountyEnemy(A, place, D.lv[1]);
+  setSpawn(A, D.e, lv, n + 6, 22);
   return { A, start };
 }
+function enterArea3(c) {
+  AudioSys.sample('door_open', { vol: 0.5, dur: 1.4, offset: 0 }); goArea(makeArea3(c));
+}
 
-// ===================== สุสานใต้ดิน 15 x 15 ต่อชั้น =====================
+// ===================== สุสานใต้ดิน 31 x 31 ต่อชั้น =====================
 function makeCata(floor) {
-  const A = blankArea({ kind: 'cata', c: 3, floor, n: 'คาตาคุมไบ ชั้น ' + floor, w: 15, h: 15, terrain: 'concrete', amb: 'cata', wdef: 'ผนังช่องวางศพ' });
-  const start = { x: 1, y: 13, f: 0 }; genMaze(A, 1, 13);
-  for (let y = 0; y < 15; y++) for (let x = 0; x < 15; x++) { const k = MK(x, y); if (A.walls.has(k)) A.wname.set(k, 'ผนังช่องวางศพ'); else A.zcell.set(k, 'ทางเดินช่องศพ'); }
-  for (let i = 0; i < 3; i++) { const rx = 1 + 2 * U.ri(1, 5), ry = 1 + 2 * U.ri(1, 5); carveRect(A, rx - 1, ry - 1, rx + 1, ry + 1, 'tile', 'ห้องฝังศพตระกูล'); }
-  zone(A, 'ทางเดินช่องศพ', -1, -1, -1, -1); zone(A, 'ห้องฝังศพตระกูล', -1, -1, -1, -1);
+  const A = blankArea({ kind: 'cata', c: 3, floor, n: 'คาตาคุมไบ ชั้น ' + floor, w: 31, h: 31, terrain: 'concrete', amb: 'cata', wdef: 'ผนังช่องวางศพ' });
+  const start = { x: 1, y: 29, f: 0 }; genMaze(A, 1, 29);
+  for (let y = 0; y < 31; y++) for (let x = 0; x < 31; x++) { const k = MK(x, y); if (A.walls.has(k)) A.wname.set(k, 'ผนังช่องวางศพ'); else A.zcell.set(k, 'ทางเดินช่องศพ'); }
+  for (let i = 0; i < 7; i++) { const rx = 1 + 2 * U.ri(1, 13), ry = 1 + 2 * U.ri(1, 13); carveRect(A, rx - 1, ry - 1, rx + 1, ry + 1, 'tile', 'ห้องฝังศพตระกูล'); }
+  zone(A, 'ทางเดินช่องศพ', -1, -1, -1, -1); zone(A, 'ห้องฝังศพตระกูล', -1, -1, -1, -1); zone(A, 'โบสถ์ใต้ดิน', -1, -1, -1, -1);
   const dist = bfs(A, start.x, start.y), place = zplacer(A, start, dist);
   A.pois.push(poi('exit', start.x, start.y, 'บันไดกลับขึ้นวิหาร', 'exit'));
   const far = [...dist.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
   A.far = far;
   if (CATA_BOSS[floor]) A.pois.push(poi('cataboss', far[0], far[1], 'ประตูหินของ' + ENEMIES[CATA_BOSS[floor][0]].n, 'lair'));
   else A.pois.push(poi('stairs', far[0], far[1], 'ช่องลมลงชั้น ' + (floor + 1), 'wind'));
-  if (floor === 7 && !G.p.souls.includes(8)) { const p = place(6, null, 'ห้องฝังศพตระกูล'); if (p) A.pois.push(poi('bulla', p.x, p.y, 'บุลลาของเด็กชาย', 'secret', { hidden: 1 })); }
+  if (floor % 5 === 3) { const p = place(8, null, 'ห้องฝังศพตระกูล'); if (p) { carveRect(A, p.x - 1, p.y - 1, p.x + 1, p.y + 1, 'tile', 'โบสถ์ใต้ดิน'); A.pois.push(poi('rest', p.x, p.y, 'โบสถ์ใต้ดิน จุดพักที่ปลอดภัย', 'temple')); } }
+  if (floor === 7 && !G.p.souls.includes(8)) { const p = place(8, null, 'ห้องฝังศพตระกูล'); if (p) A.pois.push(poi('bulla', p.x, p.y, 'บุลลาของเด็กชาย', 'secret', { hidden: 1 })); }
   if (floor === 10) placeEcoin(A, place, 3, 'a');
-  if (Math.random() < 0.55) { const p = place(4, null, 'ห้องฝังศพตระกูล'); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติในสุสาน', 'chest', { cata: 1 })); }
-  const lv = () => Math.min(60, Math.round(30 + floor * 1.2));
-  spawnEnemies(A, ['catulus', 'lemures', 'mummy', 'strix', 'echo', 'mus'], 5 + Math.floor(floor / 4), lv, m => place(Math.max(m, 4)));
+  for (let i = 0; i < 2; i++) if (Math.random() < 0.55) { const p = place(6, null, 'ห้องฝังศพตระกูล'); if (p) A.pois.push(poi('chest', p.x, p.y, 'หีบสมบัติในสุสาน', 'chest', { cata: 1 })); }
+  const lv = () => Math.min(60, Math.round(30 + floor * 1.2)), list = ['catulus', 'lemures', 'mummy', 'strix', 'echo', 'mus'], n = 14 + Math.floor(floor / 3);
+  spawnEnemies(A, list, n, lv, m => place(Math.max(m, 5)));
+  setSpawn(A, list, lv, n + 4, 22);
+  A.landmarks = A.pois.filter(p => p.type === 'stairs' || p.type === 'cataboss');
   return { A, start };
 }
 
-// ===================== ทางโรมันระหว่างเมือง (เดินเท้า) =====================
+// ===================== ทางโรมันระหว่างเมือง =====================
 function makeVia(from, to) {
-  const gap = Math.abs(to - from), H = U.clamp(20 + gap * 12, 30, 80);
+  const gap = Math.abs(to - from), H = U.clamp(60 + gap * 30, 90, 200), W = 15;
   const road = VIA_NAMES[Math.min(5, Math.max(to, from) - 2)] || VIA_NAMES[0];
-  const A = blankArea({ kind: 'via', c: from, to, n: road + ' ไป' + CITIES[to].n, w: 7, h: H, cx: 3, cy: 0, terrain: 'cement', amb: 'sky', wdef: 'ทุ่งนาและป่าข้างทาง', edge: 'ทุ่งกว้างข้างทาง' });
-  fillAll(A, A.wdef);
-  carveRect(A, 3, 0, 3, H - 1, 'cement', 'ถนนโรมัน'); carveRect(A, 2, 0, 2, H - 1, 'grass', 'ไหล่ทาง'); carveRect(A, 4, 0, 4, H - 1, 'grass', 'ไหล่ทาง');
+  const A = blankArea({ kind: 'via', c: from, to, n: road + ' ไป' + CITIES[to].n, w: W, h: H, cx: 7, cy: 0, terrain: 'grass', amb: 'sky', wdef: 'ทุ่งนาและป่าข้างทาง', edge: 'ทุ่งกว้างข้างทาง' });
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (Math.abs(x - 7) > 1 && Math.random() < 0.16) wallAt(A, x, y, 'ต้นไม้และพุ่มไม้ข้างทาง');
+  carveRect(A, 7, 0, 7, H - 1, 'cement', 'ถนนโรมัน'); carveRect(A, 6, 0, 6, H - 1, 'grass', 'ไหล่ทาง'); carveRect(A, 8, 0, 8, H - 1, 'grass', 'ไหล่ทาง');
   zone(A, 'ถนนโรมัน', -1, -1, -1, -1); zone(A, 'ไหล่ทาง', -1, -1, -1, -1);
-  const start = { x: 3, y: H - 1, f: 0 };
-  A.pois.push(poi('exit', 3, H - 1, 'ทางกลับ' + CITIES[from].n, 'exit'), poi('viaEnd', 3, 0, 'ประตูเมือง' + CITIES[to].n, 'cart'));
-  for (let y = H - 11; y > 2; y -= 10) A.pois.push(poi('flavor', 4, y, 'หลักบอกระยะทาง', null, { say: `หลักหินบอกระยะ เหลืออีก ${y} ก้าวถึง${CITIES[to].n}` }));
-  const my = Math.round(H / 2); carveRect(A, 5, my - 1, 6, my + 1, 'wood', 'จุดพักม้า มันซิโอ'); zone(A, 'จุดพักม้า มันซิโอ', -1, -1, -1, -1);
-  A.pois.push(poi('mansio', 5, my, 'จุดพักม้า มันซิโอ', 'inn'));
+  const start = { x: 7, y: H - 1, f: 0 };
+  A.pois.push(poi('exit', 7, H - 1, 'ทางกลับ' + CITIES[from].n, 'exit'), poi('viaEnd', 7, 0, 'ประตูเมือง' + CITIES[to].n, 'cart'));
+  for (let y = H - 11; y > 2; y -= 15) A.pois.push(poi('flavor', 8, y, 'หลักบอกระยะทาง', null, { say: `หลักหินบอกระยะ เหลืออีก ${y} ก้าวถึง${CITIES[to].n}` }));
+  const kinds = U.shuffle(['village', 'mansio', 'shrine', 'farm', 'tombs', 'camp']), spots = [];
+  for (let i = 0, y = H - 20; y > 12; y -= 24, i++) { const side = i % 2 ? 1 : -1, cx = 7 + side * 4, k = kinds[i % kinds.length]; spots.push([k, cx, y]); }
+  for (const [k, cx, y] of spots) {
+    carveRect(A, Math.min(cx, 7), y, Math.max(cx, 7), y, 'dirt'); carveRect(A, cx - 2, y - 2, cx + 2, y + 2, k === 'mansio' ? 'wood' : 'dirt');
+    if (k === 'village') { zone(A, 'หมู่บ้านริมทาง', cx - 2, y - 2, cx + 2, y + 2, { amb: 'village' }); A.pois.push(poi('citizen', cx, y, 'ชาวบ้านริมทาง', 'npc', { walker: 0 })); }
+    if (k === 'mansio') { zone(A, 'จุดพักม้า มันซิโอ', cx - 2, y - 2, cx + 2, y + 2); A.pois.push(poi('mansio', cx, y, 'จุดพักม้า มันซิโอ', 'inn')); }
+    if (k === 'shrine') { zone(A, 'ศาลเจ้าริมทาง', cx - 2, y - 2, cx + 2, y + 2); A.pois.push(poi('shrine', cx, y, 'ศาลเจ้าริมทาง', 'temple')); }
+    if (k === 'farm') { zone(A, 'ฟาร์มริมทาง', cx - 2, y - 2, cx + 2, y + 2, { amb: 'village' }); A.pois.push(poi('flavor', cx, y, 'ฟาร์มริมทาง', 'goat', { say: 'ชาวนายื่นนมแพะให้ดื่ม เลือดฟื้นเล็กน้อย' , heal: 0.1 })); }
+    if (k === 'tombs') { zone(A, 'สุสานริมทาง', cx - 2, y - 2, cx + 2, y + 2, { amb: 'void' }); A.pois.push(poi('flavor', cx, y, 'สุสานริมทาง', null, { say: 'หลุมศพหินเรียงริมถนน ลมพัดเย็นวาบ' })); }
+    if (k === 'camp') { zone(A, 'ค่ายโจร', cx - 2, y - 2, cx + 2, y + 2); A.pois.push(poi('chest', cx, y, 'หีบของโจร', 'chest')); }
+  }
   const lv = Math.round((CITIES[from].lv[1] + CITIES[to].lv[0]) / 2);
-  const dist = bfs(A, start.x, start.y), place = zplacer(A, start, dist);
-  const nb = 1 + gap + (Math.random() < 0.5 ? 1 : 0);
-  for (let i = 0; i < nb; i++) { const p = place(8, null, (x, y) => y > 3 && y < H - 6); if (p) A.enemies.push({ e: U.pick(['bandit', 'bandit', 'wolf']), lv, x: p.x, y: p.y, t: U.rnd(1, 3), aggro: false }); }
+  const dist = closeUnreachable(A, start), place = zplacer(A, start, dist);
+  const ev = U.pick(['merchant', 'patrol', 'traveler']); const ep = place(20, null, (x, y) => y > 10 && y < H - 10); if (ep) A.pois.push(poi(ev, ep.x, ep.y, ev === 'merchant' ? 'พ่อค้าเร่ริมทาง' : ev === 'patrol' ? 'ทหารลาดตระเวน' : 'คนเดินทางหลงทาง', 'npc'));
+  const nb = 4 + gap * 3;
+  for (let i = 0; i < nb; i++) { const p = place(10, null, (x, y, z) => y > 5 && y < H - 8 && !(z && z.n === 'จุดพักม้า มันซิโอ')); if (p) A.enemies.push({ e: U.pick(['bandit', 'bandit', 'wolf']), lv, x: p.x, y: p.y, t: U.rnd(1, 3), aggro: false }); }
+  const camp = spots.find(s => s[0] === 'camp'); if (camp) for (let i = 0; i < 3; i++) { const p = place(4, null, (x, y, z) => z && z.n === 'ค่ายโจร'); if (p) A.enemies.push({ e: 'bandit', lv: lv + 2, x: p.x, y: p.y, t: U.rnd(1, 3), aggro: false }); }
+  setSpawn(A, ['bandit', 'wolf'], () => lv, nb + 3, 30);
+  A.landmarks = A.pois.filter(p => p.type === 'viaEnd');
   return { A, start };
 }
 function walkVia(to) {
   const from = G.p.city; if (to === from) return say('คุณอยู่ที่' + CITIES[to].n + 'แล้ว');
   Game.popTo('area'); AudioSys.ui.select(); goArea(makeVia(from, to));
+}
+
+// ===================== สถานที่ใหม่และระบบช่วยเดิน =====================
+const LORE = [
+  ['ตำนานผู้พิทักษ์', 'นานมาแล้ว ดินแดนผู้พิทักษ์ส่งนักรบมาที่นี่ทุกหนึ่งร้อยปี เพื่อฟังเสียงที่หายไปจากดินแดนไร้สิ้นสุด แล้วนำมันกลับคืน'],
+  ['ถนนโรมัน', 'ถนนทุกสายปูด้วยหินแผ่นใหญ่ ทุกหนึ่งพันก้าวมีหลักหินบอกระยะ และนอกกำแพงเมือง ชาวเมืองฝังศพไว้ริมถนน เพื่อให้ผู้ผ่านทางระลึกถึง'],
+  ['เหรียญจักรพรรดิ', 'เหรียญจักรพรรดิยี่สิบเอ็ดเหรียญถูกซ่อนไว้ในป่า เหมือง และดินแดนพิเศษของทุกเมือง เหรียญจะส่งเสียงกังวานใสเมื่อเข้าใกล้'],
+  ['วิญญาณที่หลงทาง', 'มีวิญญาณแปดดวงติดอยู่ในดินแดนนี้ บางดวงซ่อนในบ่อเก่าหลังวิหาร บางดวงอยู่ลึกในป่าหรือเหมือง ฟังเสียงร้องไห้แผ่ว ๆ ให้ดี'],
+  ['สุสานใต้ดิน', 'ใต้นครระฆังมีสุสานลึกยี่สิบชั้น ประตูหินหลังวิหารจะเปิดให้ผู้ที่ได้ยินเสียงลมจากใต้ดินเท่านั้น'],
+  ['หัวหน้าฝูง', 'สัตว์ร้ายบางตัวตัวใหญ่กว่าพวกเดียวกัน เสียงร้องทุ้มต่ำกว่า มันอันตรายกว่า แต่ก็มีของดีติดตัวเสมอ'],
+  ['การฟังผนังเหมือง', 'คนงานเหมืองเล่าว่า ผนังที่เคาะแล้วทึบคือหินธรรมดา ผนังที่ก้องเหมือนเหล็กมีแร่ ส่วนเสียงใสเหมือนแก้วคือแร่หายาก'],
+  ['ขอบไร้สิ้นสุด', 'หลังจากผู้ไร้เสียงพ่ายแพ้ ประตูสู่ขอบไร้สิ้นสุดจะปรากฏในซากนครแรกเริ่ม ไม่มีใครรู้ว่ามันลึกเพียงใด'],
+];
+const RUMOR_EXTRA = ['ได้ยินว่าคืนนี้โจรจะดักปล้นที่ชานเมือง', 'ป้าข้างบ้านบอกว่าเห็นหมาป่าตัวใหญ่ผิดปกติในป่า น่าจะเป็นหัวหน้าฝูง', 'ถ้าเหนื่อยก็ไปพักที่กองไฟกลางหมู่บ้านนอกเมืองสิ', 'ที่ลานฝึกทหาร ฝึกกับหุ่นได้ไม่เสียเลือดนะ', 'ตลาดนัดเปลี่ยนสินค้าทุกวัน พรุ่งนี้อาจมีของดี', 'ต้นไม้ยักษ์ในป่า ปีนขึ้นไปแล้วจะได้ยินเสียงทั้งป่า'];
+function talkCitizen(p, sc) {
+  const A = sc.area, c = A.c;
+  if (A.errand && A.errand.to === p) { const r = 15 + 10 * c; addCoins(r); const lv = gainXp(10 * c); A.errand = null; AudioSys.ui.coin(); say(`${p.n}: ขอบใจที่เอามาส่ง นี่ค่าแรง ${r} เหรียญ${lv}`); return; }
+  if (A.errand && A.errand.from === p) { const z = zoneAt(A, A.errand.to.x, A.errand.to.y); say(`${p.n}: ฝากของไปให้${A.errand.to.n}${z ? 'ที่' + z.n : ''} อย่าลืมนะ`); return; }
+  const others = A.pois.filter(q => q.type === 'citizen' && q !== p);
+  if (!A.errand && others.length && Math.random() < 0.35) { const t = U.pick(others), z = zoneAt(A, t.x, t.y); A.errand = { from: p, to: t }; AudioSys.ui.quest(); say(`${p.n}: ช่วยเอาห่อของนี้ไปให้${t.n}${z ? 'แถว' + z.n : ''} หน่อยได้ไหม เขาจะให้ค่าแรง`); return; }
+  say(p.n + ': ' + U.pick((typeof BATH_RUMORS !== 'undefined' ? BATH_RUMORS : []).concat(RUMOR_EXTRA)));
+}
+function openLibrary() {
+  door();
+  Game.push(Menu('ห้องสมุด', LORE.map(([t, d]) => ({ label: t, desc: d, onSelect: () => { AudioSys.sample('m_page', { vol: 0.6 }); say(t + '. ' + d); } })), { intro: 'ห้องสมุดเงียบสงบ มีม้วนหนังสือเรียงอยู่บนชั้น เลือกเรื่องที่อยากอ่าน' }));
+}
+function openTraining() {
+  Game.push(Menu('ลานฝึกทหาร', [
+    { label: 'ฝึกกับหุ่นไม้', desc: 'ฝึกฟังเสียงเตือนและการต่อสู้ ไม่เสียเลือด ไม่ได้รางวัล', onSelect: () => { Game.pop(true); Game.push(CombatScene([{ e: 'statue', lv: Math.max(1, G.p.level - 3) }], { city: G.p.city, practice: true, intro: 'ฝึกกับหุ่นไม้ ไม่เสียเลือด.' })); } },
+    { label: 'ฝึกกับหุ่นสองตัว', desc: 'ฝึกรับมือศัตรูหลายตัวพร้อมกัน', onSelect: () => { Game.pop(true); Game.push(CombatScene([{ e: 'statue', lv: Math.max(1, G.p.level - 3) }, { e: 'statue', lv: Math.max(1, G.p.level - 3) }], { city: G.p.city, practice: true, intro: 'ฝึกกับหุ่นไม้สองตัว.' })); } },
+  ], { intro: 'เสียงดาบกระทบกันดังทั่วลาน ครูฝึกพยักหน้าให้คุณลองฝึก' }));
+}
+function openFair() {
+  const p = G.p, c = p.city, day = Math.floor((p.play || 0) / DAYLEN);
+  const pool = [['hpPot', 14], ['spPot', 18], ['antidote', 10], ['aqua', 22], ['panis', 10], ['oleum', 18]], mats = ['herb', 'wood', 'hide', 'copper', 'iron', 'silver', 'gold', 'coral'];
+  const pick = withSeed(day * 7 + c, () => ({ items: U.shuffle(pool.slice()).slice(0, 3), mat: U.pick(mats), gem: Math.random() < 0.3 }));
+  const buy = (k, base) => ({ label: 'ซื้อ' + ITEM_N[k], desc: ITEM_D[k], value: () => `${buyPrice(base * c)} เหรียญ`, onSelect: () => { if (pay(buyPrice(base * c))) { p.items[k] = (p.items[k] || 0) + 1; AudioSys.ui.coin(); say('ซื้อแล้ว มี ' + p.items[k]); } } });
+  Game.push(Menu('ตลาดนัดพ่อค้าเร่', () => [
+    ...pick.items.map(([k, b]) => buy(k, b)),
+    { label: 'ซื้อ' + matName(pick.mat) + ' 3 ชิ้น', value: () => `${buyPrice(MATS[pick.mat][1] * 3)} เหรียญ`, onSelect: () => { if (pay(buyPrice(MATS[pick.mat][1] * 3))) { addMat(pick.mat, 3); AudioSys.ui.coin(); say('ได้' + matName(pick.mat) + ' 3 ชิ้น'); } } },
+    ...(pick.gem ? [{ label: 'ซื้ออัญมณีแดงจากแดนไกล', value: () => `${buyPrice(150 * c)} เหรียญ`, onSelect: () => { if (pay(buyPrice(150 * c))) { addMat('redgem', 1); AudioSys.ui.item(2); say('ได้อัญมณีแดง'); } } }] : []),
+  ], { intro: 'พ่อค้าเร่ตะโกนเรียกลูกค้า สินค้าวันนี้จะเปลี่ยนอีกในวันพรุ่งนี้' }));
+}
+function restAt(p) {
+  fullHeal(); G.p.respawn = { kind: G.area.kind, c: G.area.c, n: p.n }; saveGame(true); AudioSys.ui.heal(); say(p.n + '. พักจนหายเหนื่อย เลือดและพลังจิตเต็ม บันทึกเกมแล้ว ถ้าหมดสติ จะฟื้นที่' + CITIES[G.area.c].n);
+}
+// เสียงหลักไกล ๆ
+function landmarkTick(sc, dt) {
+  const A = sc.area; if (!A.landmarks || !A.landmarks.length) return;
+  sc.lmT = (sc.lmT ?? 4) - dt; if (sc.lmT > 0) return; sc.lmT = 7;
+  const { x, y, f } = G.pos, R = sc.hearR();
+  for (const p of A.landmarks) { if (!A.pois.includes(p) || !p.snd) continue; const d = cheb(p.x - x, p.y - y); if (d <= R) continue; AudioSys.beacon(p.snd, { angle: relAngle(p.x - x, p.y - y, f), dist: Math.min(6, 2 + d / 8), gain: 0.4 }); }
+}
+// ชาวเมืองเดินไปมา
+function walkerTick(sc, dt) {
+  const A = sc.area; sc.wkT = (sc.wkT ?? 3) - dt; if (sc.wkT > 0) return; sc.wkT = U.rnd(2.5, 4);
+  for (const p of A.pois) {
+    if (!p.walker || Math.random() < 0.4) continue;
+    const [dx, dy] = U.pick([[1, 0], [-1, 0], [0, 1], [0, -1]]), nx = p.x + dx, ny = p.y + dy;
+    if (!walkable(A, nx, ny) || A.pois.some(q => q !== p && q.x === nx && q.y === ny) || (nx === G.pos.x && ny === G.pos.y)) continue;
+    p.x = nx; p.y = ny;
+  }
+}
+// ปักหมุด
+function PinMenu(sc) {
+  const A = sc.area; A.pins = A.pins || [];
+  return Menu('ปักหมุด', () => [
+    { label: 'ปักหมุดตรงที่ยืนอยู่', desc: 'ปักได้ 3 หมุดในแผนที่นี้ หมุดเก่าสุดจะถูกแทนที่', onSelect: () => { const z = zoneAt(A, G.pos.x, G.pos.y), n = 'หมุดที่ ' + (A.pins.length >= 3 ? 1 : A.pins.length + 1) + (z ? ' ใน' + z.n : ''); if (A.pins.length >= 3) A.pins.shift(); A.pins.push({ x: G.pos.x, y: G.pos.y, n }); A.pins.forEach((q, i) => q.n = q.n.replace(/^หมุดที่ \d/, 'หมุดที่ ' + (i + 1))); AudioSys.ui.select(); say('ปัก' + A.pins[A.pins.length - 1].n + ' แล้ว'); } },
+    ...A.pins.map(q => ({ label: q.n, value: () => cheb(q.x - G.pos.x, q.y - G.pos.y) + ' ก้าว', desc: 'เลือกเพื่อให้เกมพาเดินไปที่หมุดนี้', onSelect: () => { Game.pop(true); sc.walkTo(q.x, q.y, q.n); } })),
+  ], { intro: 'ปักหมุดไว้กลับมาจุดเดิมได้ หมุดใช้ได้จนกว่าจะออกจากแผนที่นี้' });
+}
+// ฟังแผนที่
+function mapInfo(A) {
+  const { x, y } = G.pos, dir8 = (dx, dy) => { if (Math.abs(dx) < A.w / 8 && Math.abs(dy) < A.h / 8) return 'ตรงกลาง'; const a = Math.atan2(dx, -dy); return 'ทิศ' + COMPASS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8]; };
+  const cx = (A.w - 1) / 2, cy = (A.h - 1) / 2;
+  const named = [...new Map(A.zones.filter(z => z.x0 >= 0 && z.x1 - z.x0 < A.w).map(z => [z.n, z])).values()].slice(0, 8);
+  const zt = named.map(z => z.n + ' อยู่' + dir8((z.x0 + z.x1) / 2 - cx, (z.y0 + z.y1) / 2 - cy)).join(', ');
+  const ex = A.pois.filter(p => ['cityOut', 'cityIn', 'cart', 'exit', 'gateForest', 'gateMine', 'gateA3', 'subVia', 'viaEnd', 'stairs', 'caveExit'].includes(p.type)).map(p => p.n + ' ' + dir8(p.x - cx, p.y - cy)).join(', ');
+  const me = dir8(x - cx, y - cy);
+  return `${A.n} กว้าง ${A.w} ยาว ${A.h} ช่อง. ${zt ? 'ย่านและเขต: ' + zt + '. ' : ''}${ex ? 'ทางเข้าออก: ' + ex + '. ' : ''}คุณอยู่${me === 'ตรงกลาง' ? 'ตรงกลาง' : 'ทาง' + me.slice(3)}ของแผนที่`;
 }
 
 // ===================== การต่อสู้ด้วยเสียง =====================
@@ -3368,7 +3646,7 @@ function CombatScene(list, opts = {}) {
       if (ar.lungeRed && e.type === 'lunge') dmg *= 1 - ar.lungeRed; if (ar.heavyRed && e.type === 'heavy') dmg *= 1 - ar.heavyRed;
       if (e.D.el === 'fire' && buffOn('oleum')) dmg *= 0.6; if (e.D.mech === 'shove' && e.type === 'lunge') { dmg *= 1.6; msg = 'ถูกผลักเกือบตกสะพาน! ' + msg; }
       if (hasPower('stoneskin')) dmg *= 0.85; if (ar.red) dmg *= 1 - ar.red; if (this.buffs.rage) dmg *= 0.7; if (e.D.el && ar.res === e.D.el) dmg *= 0.7;
-      dmg = Math.max(1, Math.round(dmg)); P.hp -= dmg; if (!this.lowWarned && P.hp > 0 && P.hp < S().maxHp * 0.3) { this.lowWarned = true; setTimeout(() => AudioSys.sample('n_crit_ev', { vol: 0.6 }), 500); }
+      dmg = Math.max(1, Math.round(dmg)); P.hp -= opts.practice ? 0 : dmg; if (!this.lowWarned && P.hp > 0 && P.hp < S().maxHp * 0.3) { this.lowWarned = true; setTimeout(() => AudioSys.sample('n_crit_ev', { vol: 0.6 }), 500); }
       AudioSys.strike({ angle: e.angle, dist: 0.5 }); if (e.type === 'heavy') AudioSys.sample('x_pound', { angle: e.angle, dist: 0.5, vol: 0.7 }); AudioSys.playerHurt(); Haptic.hurt();
       P.armorDur = Math.max(0, P.armorDur - 1);
       this.chain = 0; this.combo = 0;
@@ -3562,12 +3840,13 @@ function CombatScene(list, opts = {}) {
     end(r) {
       if (this.ended) return; this.ended = true; this.over = true; this.charge = null; AudioSys.stopMusic();
       Game.pop(true);
-      if (r === 'win') {
+      if (r === 'win' && opts.practice) { AudioSys.ui.victory(); say('ฝึกเสร็จแล้ว ฝีมือของคุณดีขึ้น'); }
+      else if (r === 'win') {
         AudioSys.ui.victory(); Haptic.v([60, 40, 60, 40, 120]);
         let xp = 0, coins = 0; const drops = {};
         for (const e of this.killed.filter(k => !k.fled)) {
           xp += (10 + 5 * e.lv) * (e.boss ? 8 : 1) * (e.elite ? 2.5 : 1) * gapFx(e).xp * (opts.xpMul || 1); coins += (4 + 2 * e.lv) * (e.boss ? 10 : 1) * (e.elite ? 2 : 1) * (opts.xpMul || 1);
-          if (e.elite) { if (Math.random() < 0.5) { P.items.potion = (P.items.potion || 0) + 1; drops.__potion = (drops.__potion || 0) + 1; } else { const m = (e.D.drop || [])[0]; if (m) drops[m[0]] = (drops[m[0]] || 0) + 2; } }
+          if (e.elite) { if (Math.random() < 0.5) { P.items.hpPot = (P.items.hpPot || 0) + 1; drops.__potion = (drops.__potion || 0) + 1; } else { const m = (e.D.drop || [])[0]; if (m) drops[m[0]] = (drops[m[0]] || 0) + 2; } }
           for (const [m, ch] of e.D.drop || []) { const k = e.boss ? U.ri(2, 3) : (Math.random() < ch * (1 + S().s.LUK * 0.02) ? 1 : 0); if (k) drops[m] = (drops[m] || 0) + k; }
         }
         const got = addCoins(coins); const potGot = drops.__potion; delete drops.__potion; Object.entries(drops).forEach(([m, k]) => addMat(m, k));
@@ -3586,6 +3865,7 @@ function CombatScene(list, opts = {}) {
 const COMBAT_HELP = 'ศัตรูทุกตัวจะส่งเสียงเตือนก่อนโจมตีเสมอ. เสียงลมหวีดสูงขึ้นคือการกระโจน ให้ปัดซ้ายหรือขวาเพื่อหลบ. เสียงทุ้มสั่นหนักคือการโจมตีหนัก ให้ปัดลงเพื่อตั้งรับ. เสียงแหลมพุ่งขึ้นเร็วคือการโจมตีเร็ว ให้ปัดขึ้นเพื่อพุ่งสวน. แตะหนึ่งครั้งเพื่อโจมตีธรรมดา แตะสองครั้งเพื่อผนึกพลัง ซึ่งแรงเกือบสองเท่าแต่ต้องรอนานกว่าจะตีครั้งต่อไปได้. แตะค้างไว้ แล้วปล่อยเมื่อได้ยินเสียงติ๊ง เพื่อใช้ทักษะที่ 1. แตะสองนิ้วเพื่อใช้ทักษะที่ 2. วาดวงกลมเพื่อใช้ทักษะสุดยอด. ปัดสามนิ้วเพื่อใช้อาวุธรอง. ปัดสองนิ้วไปซ้ายเพื่อดื่มยา. ปัดสองนิ้วขึ้นเพื่อฟังสถานการณ์. แตะสามนิ้วเพื่อหยุดชั่วคราว.';
 function defeated() {
   const p = G.p, loss = Math.round(p.coins * DIFF[CFG.diff].loss); p.coins -= loss; fullHeal();
+  if (p.respawn && p.respawn.c === p.city) { Game.push(Story([`คุณหมดสติ... ฟื้นขึ้นมาที่${p.respawn.n}` + (loss ? ` เสียเงิน ${loss} เหรียญ` : '') + ' ไม่เสียของและค่าประสบการณ์'], () => goSuburb(p.city, 'rest'))); return; }
   Game.push(Story([`คุณหมดสติ... ฟื้นขึ้นมาที่วิหารของ${CITIES[p.city].n}` + (loss ? ` เสียเงิน ${loss} เหรียญ` : '') + ' ไม่เสียของและค่าประสบการณ์'], () => goTown(p.city, 'temple')));
 }
 // ===================== ขอบไร้สิ้นสุด =====================
@@ -3848,6 +4128,7 @@ function openCart() {
   Game.push(Menu('ลานเกวียน', () => [
     ...activeQuests().filter(id => qdef(id).c === p.city && qdef(id).o.some(o => o.t === 'escort') && !qst(id).prog[0]).map(id => ({ label: 'ออกเดินทางคุ้มกันพ่อค้า', onSelect: () => { Game.popTo('area'); Game.push(EscortScene(id)); } })),
     ...[...Array(p.unlocked)].map((_, i) => i + 1).map(c => ({ label: CITIES[c].n, value: () => c === p.city ? 'อยู่ที่นี่' : 'เลเวลแนะนำ ' + CITIES[c].lv[0] + ' ถึง ' + CITIES[c].lv[1], onSelect: () => travel(c) })),
+    { label: 'ออกไปชานเมือง', desc: 'เดินออกประตูเมืองไปยังชานเมือง', onSelect: () => goSuburb(p.city, 'cart') },
     { label: 'เดินเท้าตามถนนโรมัน', desc: 'เดินเองบนถนนโรมันไปเมืองอื่น มีหลักบอกระยะ จุดพักม้า และโจรดักปล้น', onSelect: () => Game.push(Menu('เดินเท้าไปเมือง', [...Array(p.unlocked)].map((_, i) => i + 1).filter(c => c !== p.city).map(c => ({ label: CITIES[c].n, value: () => 'ระยะทางประมาณ ' + U.clamp(20 + Math.abs(c - p.city) * 12, 30, 80) + ' ก้าว', onSelect: () => walkVia(c) })))) },
     ...(p.flags.final ? [{ label: 'ขอบไร้สิ้นสุด', value: () => 'สถิติชั้น ' + p.endlessBest, onSelect: () => { Game.popTo('area'); startEndless(); } }] : []),
   ], { intro: p.unlocked < 7 ? 'ทำภารกิจหลักของแต่ละเมืองให้สำเร็จเพื่อปลดล็อกเมืองถัดไป' : '' }));
@@ -3865,6 +4146,8 @@ function MainMenu(sc) {
     { label: 'สถานะตัวละคร', onSelect: () => Game.push(Story(charPages(), null, 'สถานะตัวละคร')) },
     { label: 'แจกแต้มค่าพลัง', value: () => p.free + ' แต้ม', disabled: !p.free, why: 'ไม่มีแต้มเหลือ ได้เพิ่ม 3 แต้มเมื่อเลเวลอัป', onSelect: () => Game.push(AllocMenu()) },
     { label: 'สมุดภารกิจ', value: () => activeQuests().length + ' ภารกิจ', onSelect: () => Game.push(QuestLog()) },
+    { label: 'ฟังแผนที่', desc: 'ฟังผังของพื้นที่นี้ และตำแหน่งของคุณ', onSelect: () => say(mapInfo(A)) },
+    { label: 'ปักหมุด', desc: 'ปักหมุดตรงที่ยืน แล้วให้เกมพากลับมาได้', onSelect: () => Game.push(PinMenu(sc)) },
     ...(A.kind === 'town' ? [{ label: 'เดินไปที่...', onSelect: () => Game.push(GotoMenu(sc)) }] : [
       { label: 'เดินไปยังเป้าหมายเข็มทิศ', onSelect: () => { const t = compassTarget(sc); Game.pop(true); if (t && !t.msg) sc.walkTo(t.x, t.y, t.n); else say(t ? t.msg : 'ไม่มีเป้าหมาย'); } },
       { label: 'กลับเมือง', onSelect: () => goTown(A.c, A.kind === 'mine' ? 'gateMine' : A.kind === 'a3' ? 'gateA3' : A.kind === 'cata' ? 'temple' : A.kind === 'via' ? 'cart' : 'gateForest') },
@@ -4013,12 +4296,12 @@ const HELP_PAGES = [
   'เกมนี้เล่นด้วยหูและมือ ใส่หูฟังสเตอริโอเพื่อฟังทิศทางของเสียง. มีสองโหมด โหมดท่าทางใช้การปัดและแตะทั่วจอ ต้องปิด TalkBack หรือ VoiceOver ก่อน. โหมดปุ่มใช้ปุ่มบนหน้าจอ ใช้ร่วมกับโปรแกรมอ่านหน้าจอได้. แตะสี่นิ้วเพื่อสลับโหมดได้ทุกเมื่อ',
   'การเดินสี่ทิศ (ค่าเริ่มต้น): ปัดขึ้นไปทิศเหนือ ปัดลงไปทิศใต้ ปัดขวาไปทิศตะวันออก ปัดซ้ายไปทิศตะวันตก ไม่ต้องหันตัว. ปัดทแยงเพื่อเดินทแยง เช่น ปัดขึ้นไปทางขวาคือทิศตะวันออกเฉียงเหนือ บนคอมพิวเตอร์ใช้ปุ่มตัวเลข 7 9 1 3 หรือ Home Page Up End Page Down. ปัดสามนิ้วไปทิศไหนเพื่อเดินต่อเนื่องไปทิศนั้น หรือกด Shift กับลูกศร. วาดวงกลมเพื่อเลือกสถานที่ให้เกมเดินไปให้. โต้ตอบได้โดยไม่ต้องหันหน้าเข้าหา เกมหาสิ่งที่อยู่ติดตัวให้เอง ถ้ามีหลายอย่างจะถามว่าจะเลือกอันไหน. ในเหมืองให้เดินไปชนผนังด้านที่อยากเคาะก่อน แล้วแตะหนึ่งครั้งเพื่อเคาะ แตะสองครั้งเพื่อขุด. เข็มทิศเสียงจะบอกทางเป็นทิศให้เดินตาม. มี 3 รูปแบบให้เลือกที่ ตั้งค่า แล้วเลือก รูปแบบการเดิน: หันตามทางที่เดิน, ยึดทิศเหนือ หรือหันตัวแบบเดิม. ฝึกฟังทิศได้ที่ ห้องฝึกฟัง แล้วเลือก ด่านฝึก ฟังเสียงแล้วบอกทิศ',
   'การสำรวจ: ปัดขึ้นเพื่อเดินหน้า ปัดลงเพื่อถอยหลัง ปัดซ้ายหรือขวาเพื่อหันทีละ 45 องศา. แตะหนึ่งครั้งเพื่อฟังรอบตัว แตะสองครั้งเพื่อโต้ตอบ คุย เก็บของ เข้าร้าน. แตะค้างหรือแตะสามนิ้วเพื่อเปิดเมนูหลัก. แตะสองนิ้วเพื่อฟังสถานะ. ปัดสองนิ้วขึ้นเพื่อใช้เข็มทิศเสียง ชี้ทางไปเป้าหมายภารกิจ. ปัดสองนิ้วลงเพื่อฟังข้อความล่าสุดซ้ำ',
-  'แผนที่ใหญ่: เมืองทุกเมืองใช้ผังโรมัน มีถนนคาร์โดวิ่งเหนือใต้ และถนนเดคูมานุสวิ่งตะวันออกตะวันตก ตัดกันที่ฟอรุมกลางเมืองซึ่งมีน้ำพุ. ประตูเมืองอยู่ปลายถนนทั้งสี่ทิศ. เมืองแบ่งเป็นย่านวิหาร ย่านบ้านพัก ย่านตลาด และย่านช่างฝีมือ เข้าย่านใหม่เกมจะบอกชื่อย่าน. ฟังเสียงเท้าเพื่อรู้ว่าเดินอยู่บนถนน ทางเดิน หรือพื้นอะไร. ป่ามีทางเดินหลัก ลำธาร และสะพาน. เหมืองมีอุโมงค์หลักที่มีรางให้เดินตาม แร่ดีมักอยู่ในอุโมงค์แยก. ปัดสามนิ้วขึ้น หรือกด Shift กับลูกศรขึ้น เพื่อเดินต่อเนื่อง เกมจะหยุดเองเมื่อเจอทางแยก สิ่งของ หรือศัตรู. ปัดสามนิ้วลง หรือกด N เพื่อเลือกสถานที่แล้วให้เกมเดินไปให้. ที่ลานเกวียนเลือก เดินเท้าตามถนนโรมัน เพื่อเดินทางไปเมืองอื่นด้วยตัวเองได้',
+  'แผนที่ใหญ่: เมืองทุกเมืองกว้าง 51 ช่อง ใช้ผังโรมัน ถนนคาร์โดวิ่งเหนือใต้ ถนนเดคูมานุสวิ่งตะวันออกตะวันตก ตัดกันที่ฟอรุมกลางเมืองซึ่งมีน้ำพุ. เมืองมี 8 ย่าน คือ ย่านคนรวย ย่านวิหาร ย่านทหาร ย่านบ้านพัก ย่านตลาด ย่านคนจน ย่านช่างฝีมือ และย่านโรงละคร. ในเมืองมีห้องสมุด ลานฝึกทหารที่ฝึกได้ไม่เสียเลือด ตลาดนัดที่เปลี่ยนสินค้าทุกวัน บ่อน้ำสาธารณะ และชาวเมืองที่เดินไปมา คุยได้ บางคนฝากของไปส่งแลกค่าแรง. ออกประตูเมืองจะถึงชานเมือง ซึ่งมีไร่นา สุสานริมถนน ท่อส่งน้ำ หมู่บ้านเล็ก และทางไปป่า เหมือง พื้นที่ที่ 3 และทางหลวงโรมัน. ป่ากว้าง 61 ช่อง มีลำธาร 2 สาย ทะเลสาบ ค่ายพรานป่า ศาลเจ้า ต้นไม้ยักษ์ที่ปีนแล้วได้ยินไกลขึ้น และถ้ำ. เหมืองกว้าง 47 ช่อง 3 ชั้น ชั้นสองมีแม่น้ำใต้ดิน ชั้นสามมีหินถล่ม. จุดพักใช้ฟื้นเลือด บันทึกเกม และเป็นที่ฟื้นเมื่อหมดสติ. มอนสเตอร์จะเกิดใหม่เรื่อย ๆ ระหว่างที่คุณอยู่ในพื้นที่. กด L หรือเลือก ฟังแผนที่ ในเมนูหลัก เพื่อฟังผังและตำแหน่งของคุณ. กด V หรือเลือก ปักหมุด เพื่อจำจุดแล้วให้เกมพากลับ. ปัดสามนิ้วหรือกด Shift กับลูกศรเพื่อเดินต่อเนื่อง วาดวงกลมหรือกด N เพื่อนำทางอัตโนมัติ',
   'ในเมือง: น้ำพุอยู่กลางเมือง ประตูไปพื้นที่ที่ 3 อยู่ใต้โรงเตี๊ยมหนึ่งก้าว โรงอาบน้ำอยู่ระหว่างวิหารกับประตูเหมือง ชาวเมืองยืนกระจายอยู่หลายจุด ใช้คำสั่งเดินไปที่ในเมนูหลักได้. น้ำพุอยู่กลางเมือง วิหารอยู่เหนือ โรงเตี๊ยมอยู่ใต้ ช่างตีเหล็กอยู่ตะวันออก ร้านยาอยู่ตะวันตก ผู้นำเมืองยืนอยู่เหนือน้ำพุหนึ่งก้าว ประตูป่าอยู่มุมตะวันตกเฉียงเหนือ ประตูเหมืองอยู่มุมตะวันออกเฉียงเหนือ ลานเกวียนอยู่มุมตะวันตกเฉียงใต้. ทุกเมืองมีผังเหมือนกัน และเมนูหลักมีคำสั่งเดินไปที่ เพื่อเดินอัตโนมัติ',
   COMBAT_HELP,
   'ในเหมือง: หันหน้าเข้าหาผนังแล้วแตะหนึ่งครั้งเพื่อเคาะ เสียงทึบคือหินธรรมดา เสียงกังวานคือมีแร่ เสียงก้องใสคือแร่หายาก. แตะสองครั้งเพื่อขุด แล้วแตะตามจังหวะเสียงป๊อก. ถ้าได้ยินเสียงหินร่วง ให้รีบเดินหนี',
   'ถ้าเสียงเงียบหลังปิดหน้าจอหรือสลับแอป: แตะหน้าจอหนึ่งครั้ง เกมจะปลุกเสียงให้เอง. ถ้ายังเงียบ ใช้สามนิ้วแตะค้างไว้ 1 วินาทีแล้วปล่อย หรือไปที่ ตั้งค่า แล้วเลือก รีเซ็ตระบบเสียง. ถ้าปิดจอระหว่างต่อสู้ เกมจะหยุดชั่วคราวให้อัตโนมัติ และถ้าปิดจอนอกการต่อสู้ เกมจะบันทึกให้.',
-  'เล่นบนคอมพิวเตอร์: ในหน้าแรกกด Enter ที่ปุ่ม เล่นบนคอมพิวเตอร์ เกมจะเปิดเต็มจอ และส่งข้อความทั้งหมดให้ NVDA หรือ JAWS อ่านด้วยเสียงและความเร็วที่คุณตั้งไว้ ปุ่มทุกปุ่มจะเข้าเกมโดยตรง. ตอนสำรวจ: ลูกศรหรือ W A S D เดินไปทิศเหนือ ใต้ ตะวันออก ตะวันตก. ปุ่มตัวเลข 7 9 1 3 เดินทแยง. Shift กับลูกศร เดินต่อเนื่อง. (ถ้าเลือกแบบหันตัวเดิม ลูกศรซ้ายขวาคือหันตัว). Enter หรือ E โต้ตอบ. Space ฟังรอบตัวหรือเคาะผนัง. C เข็มทิศเสียง. Q บอกตำแหน่งและทิศ. I สถานะ. B กระเป๋า. J สมุดภารกิจ. N นำทางอัตโนมัติ. P ยาฟื้นเลือด. O ยาพลังจิต. M หรือ Esc เมนูหลัก. ตอนต่อสู้: Space โจมตีธรรมดา Enter ผนึกพลัง ลูกศรซ้ายขวาหลบ ลูกศรลงตั้งรับ ลูกศรขึ้นพุ่งสวน ตัวเลข 1 ถึง 4 ทักษะ 1 ทักษะ 2 ทักษะสุดยอด และอาวุธรอง P ยา I สถานการณ์ Esc หยุดชั่วคราว. ทุกหน้าจอ: F1 รายการปุ่ม H ช่วยเหลือหน้าจอนี้ R พูดซ้ำ ปุ่มบวกลบปรับความดัง Ctrl กับ T เปิดปิดเสียงพูดในตัวเกม F11 เต็มจอ. เปลี่ยนปุ่มเองได้ที่ ตั้งค่า แล้วเลือก ปุ่มคีย์บอร์ด. ย้ายเกมระหว่างโทรศัพท์กับคอมพิวเตอร์ได้ด้วย ตั้งค่า แล้วเลือก ส่งออกไฟล์บันทึก และ นำเข้าไฟล์บันทึก.',
+  'เล่นบนคอมพิวเตอร์: ในหน้าแรกกด Enter ที่ปุ่ม เล่นบนคอมพิวเตอร์ เกมจะเปิดเต็มจอ และส่งข้อความทั้งหมดให้ NVDA หรือ JAWS อ่านด้วยเสียงและความเร็วที่คุณตั้งไว้ ปุ่มทุกปุ่มจะเข้าเกมโดยตรง. ตอนสำรวจ: ลูกศรหรือ W A S D เดินไปทิศเหนือ ใต้ ตะวันออก ตะวันตก. ปุ่มตัวเลข 7 9 1 3 เดินทแยง. Shift กับลูกศร เดินต่อเนื่อง. (ถ้าเลือกแบบหันตัวเดิม ลูกศรซ้ายขวาคือหันตัว). Enter หรือ E โต้ตอบ. Space ฟังรอบตัวหรือเคาะผนัง. C เข็มทิศเสียง. Q บอกตำแหน่งและทิศ. I สถานะ. B กระเป๋า. J สมุดภารกิจ. N นำทางอัตโนมัติ. V ปักหมุด. L ฟังแผนที่. P ยาฟื้นเลือด. O ยาพลังจิต. M หรือ Esc เมนูหลัก. ตอนต่อสู้: Space โจมตีธรรมดา Enter ผนึกพลัง ลูกศรซ้ายขวาหลบ ลูกศรลงตั้งรับ ลูกศรขึ้นพุ่งสวน ตัวเลข 1 ถึง 4 ทักษะ 1 ทักษะ 2 ทักษะสุดยอด และอาวุธรอง P ยา I สถานการณ์ Esc หยุดชั่วคราว. ทุกหน้าจอ: F1 รายการปุ่ม H ช่วยเหลือหน้าจอนี้ R พูดซ้ำ ปุ่มบวกลบปรับความดัง Ctrl กับ T เปิดปิดเสียงพูดในตัวเกม F11 เต็มจอ. เปลี่ยนปุ่มเองได้ที่ ตั้งค่า แล้วเลือก ปุ่มคีย์บอร์ด. ย้ายเกมระหว่างโทรศัพท์กับคอมพิวเตอร์ได้ด้วย ตั้งค่า แล้วเลือก ส่งออกไฟล์บันทึก และ นำเข้าไฟล์บันทึก.',
 ];
 // ===================== บันทึกเกม =====================
 function saveGame(silent) {
